@@ -100,6 +100,7 @@ func (a *App) ShowMain() {
 	runtime.WindowSetAlwaysOnTop(a.ctx, false)
 	runtime.WindowCenter(a.ctx)
 	runtime.WindowShow(a.ctx)
+	runtime.WindowUnminimise(a.ctx)
 	a.view = viewMain
 	a.emit("tray:full", nil)
 }

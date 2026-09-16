@@ -28,6 +28,12 @@ func main() {
 		},
 		BackgroundColour:  &options.RGBA{R: 12, G: 10, B: 9, A: 1},
 		HideWindowOnClose: true,
+		SingleInstanceLock: &options.SingleInstanceLock{
+			UniqueId: "mocha-desktop",
+			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {
+				app.ShowMain()
+			},
+		},
 		Mac: &mac.Options{
 			Appearance: mac.NSAppearanceNameDarkAqua,
 			About: &mac.AboutInfo{
