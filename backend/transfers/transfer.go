@@ -72,6 +72,23 @@ type BatchResult struct {
 	Err       error
 }
 
+type progressReader struct {
+	sr     *io.SectionReader
+	loaded *atomic.Int64
+	sent   *int64
+	emit   func()
+}
+
+func (r *progressReader) Read(p []byte) (int, error) {
+	n, err := r.sr.Read(p)
+	if n > 0 {
+		r.loaded.Add(int64(n))
+		*r.sent += int64(n)
+		r.emit()
+	}
+	return n, err
+}
+
 func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remotePath, jobID string, emit Emitter) (string, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
@@ -147,9 +164,11 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 	results := make([]result, numParts)
 	var mu sync.Mutex
 	var loaded atomic.Int64
+	var lastEmit atomic.Int64
 	var failed error
 	var wg sync.WaitGroup
 	start := time.Now()
+	lastEmit.Store(time.Now().Add(-time.Second).UnixNano())
 	emitUploading := func() {
 		l := loaded.Load()
 		if l > size {
@@ -170,6 +189,14 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 			pct = 100
 		}
 		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: l, Total: size, Percent: pct, SpeedBps: speed, Status: "uploading"})
+	}
+	maybeEmit := func() {
+		now := time.Now().UnixNano()
+		if now-lastEmit.Load() < 200*int64(time.Millisecond) {
+			return
+		}
+		lastEmit.Store(now)
+		emitUploading()
 	}
 
 	putPart := func(partNum int, offset, length int64) {
@@ -205,7 +232,7 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 				continue
 			}
 			lastErr = nil
-			etag, lastErr = putPartAttempt(ctx, urls[0].URL, localPath, offset, length, partNum)
+			etag, lastErr = putPartAttempt(ctx, urls[0].URL, localPath, offset, length, partNum, &loaded, maybeEmit)
 			if lastErr == nil {
 				break
 			}
@@ -225,7 +252,6 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 			return
 		}
 		results[partNum-1] = result{Num: partNum, ETag: etag}
-		loaded.Add(length)
 		emitUploading()
 	}
 
@@ -414,7 +440,7 @@ func DownloadFileWithID(ctx context.Context, client *api.Client, fileID, destPat
 	return nil
 }
 
-func putPartAttempt(ctx context.Context, url, localPath string, offset, length int64, partNum int) (string, error) {
+func putPartAttempt(ctx context.Context, url, localPath string, offset, length int64, partNum int, loaded *atomic.Int64, emit func()) (string, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	f, err := os.Open(localPath)
@@ -422,8 +448,9 @@ func putPartAttempt(ctx context.Context, url, localPath string, offset, length i
 		return "", err
 	}
 	defer f.Close()
+	var sent int64
 	sr := io.NewSectionReader(f, offset, length)
-	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPut, url, sr)
+	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPut, url, &progressReader{sr: sr, loaded: loaded, sent: &sent, emit: emit})
 	if err != nil {
 		return "", err
 	}
@@ -431,11 +458,13 @@ func putPartAttempt(ctx context.Context, url, localPath string, offset, length i
 	req.ContentLength = length
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		loaded.Add(-sent)
 		return "", err
 	}
 	defer resp.Body.Close()
 	io.Copy(io.Discard, resp.Body)
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		loaded.Add(-sent)
 		return "", fmt.Errorf("part %d status %d", partNum, resp.StatusCode)
 	}
 	etag := resp.Header.Get("ETag")
