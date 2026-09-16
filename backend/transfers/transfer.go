@@ -72,37 +72,6 @@ type BatchResult struct {
 	Err       error
 }
 
-func UploadBatch(ctx context.Context, client *api.Client, files []BatchFile, concurrency int, emit Emitter) []BatchResult {
-	results := make([]BatchResult, len(files))
-	if len(files) == 0 {
-		return results
-	}
-	if concurrency < 1 {
-		concurrency = DefaultFileConcurrency
-	}
-	if concurrency > len(files) {
-		concurrency = len(files)
-	}
-	sem := make(chan struct{}, concurrency)
-	var wg sync.WaitGroup
-	for i, f := range files {
-		wg.Add(1)
-		go func(i int, f BatchFile) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			jobID := f.JobID
-			if jobID == "" {
-				jobID = NewJobID("")
-			}
-			fileID, err := UploadFileWithID(ctx, client, f.LocalPath, f.RemotePath, jobID, emit)
-			results[i] = BatchResult{JobID: jobID, LocalPath: f.LocalPath, FileID: fileID, Err: err}
-		}(i, f)
-	}
-	wg.Wait()
-	return results
-}
-
 func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remotePath, jobID string, emit Emitter) (string, error) {
 	info, err := os.Stat(localPath)
 	if err != nil {
@@ -127,8 +96,11 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 			}
 			emit("upload:progress", Progress{JobID: jobID, FileName: name, Total: size, Status: "init"})
 		}
-		init, initErr = client.InitMultipart(name, size, mimeType, remotePath)
+		init, initErr = client.InitMultipartCtx(ctx, name, size, mimeType, remotePath)
 		if initErr == nil {
+			break
+		}
+		if ctx.Err() != nil {
 			break
 		}
 		if !isTransientInitError(initErr) {
@@ -136,6 +108,10 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 		}
 	}
 	if initErr != nil {
+		if ctx.Err() != nil {
+			emit("upload:progress", Progress{JobID: jobID, FileName: name, Total: size, Status: "cancelled", Error: ctx.Err().Error()})
+			return "", ctx.Err()
+		}
 		emit("upload:progress", Progress{JobID: jobID, FileName: name, Total: size, Status: "error", Error: initErr.Error()})
 		return "", initErr
 	}
@@ -162,12 +138,6 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 		concurrency = 8
 	}
 
-	f, err := os.Open(localPath)
-	if err != nil {
-		return "", err
-	}
-	defer f.Close()
-
 	type result struct {
 		Num  int
 		ETag string
@@ -176,11 +146,31 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 	sem := make(chan struct{}, concurrency)
 	results := make([]result, numParts)
 	var mu sync.Mutex
-	var loaded int64
+	var loaded atomic.Int64
 	var failed error
 	var wg sync.WaitGroup
 	start := time.Now()
-	var done int64
+	emitUploading := func() {
+		l := loaded.Load()
+		if l > size {
+			l = size
+		}
+		elapsed := time.Since(start).Seconds()
+		var speed float64
+		if elapsed > 0 {
+			speed = float64(l) / elapsed
+		}
+		var pct float64
+		if size > 0 {
+			pct = float64(l) / float64(size) * 100
+			if pct > 100 {
+				pct = 100
+			}
+		} else {
+			pct = 100
+		}
+		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: l, Total: size, Percent: pct, SpeedBps: speed, Status: "uploading"})
+	}
 
 	putPart := func(partNum int, offset, length int64) {
 		defer wg.Done()
@@ -200,7 +190,7 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 				return
 			default:
 			}
-			urls, err := client.PresignedPartUrls(init.UploadID, init.Key, init.NodeID, originalName, remotePath, []int{partNum})
+			urls, err := client.PresignedPartUrlsCtx(ctx, init.UploadID, init.Key, init.NodeID, originalName, remotePath, []int{partNum})
 			if err != nil || len(urls) == 0 {
 				lastErr = err
 				if lastErr == nil {
@@ -215,7 +205,7 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 				continue
 			}
 			lastErr = nil
-			etag, lastErr = putPartAttempt(ctx, urls[0].URL, f, offset, length, partNum)
+			etag, lastErr = putPartAttempt(ctx, urls[0].URL, localPath, offset, length, partNum)
 			if lastErr == nil {
 				break
 			}
@@ -235,20 +225,8 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 			return
 		}
 		results[partNum-1] = result{Num: partNum, ETag: etag}
-		loaded += length
-		done++
-		elapsed := time.Since(start).Seconds()
-		var speed float64
-		if elapsed > 0 {
-			speed = float64(loaded) / elapsed
-		}
-		var pct float64
-		if size > 0 {
-			pct = float64(loaded) / float64(size) * 100
-		} else {
-			pct = 100
-		}
-		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: loaded, Total: size, Percent: pct, SpeedBps: speed, Status: "uploading"})
+		loaded.Add(length)
+		emitUploading()
 	}
 
 	for i := 0; i < numParts; i++ {
@@ -261,14 +239,15 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 		go putPart(i+1, off, ln)
 	}
 	wg.Wait()
+	loadedFinal := loaded.Load()
 	if ctx.Err() != nil {
-		client.AbortMultipart(init.UploadID, init.Key, init.NodeID, originalName, remotePath)
-		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: loaded, Total: size, Status: "cancelled", Error: ctx.Err().Error()})
+		client.AbortMultipartCtx(ctx, init.UploadID, init.Key, init.NodeID, originalName, remotePath)
+		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: loadedFinal, Total: size, Status: "cancelled", Error: ctx.Err().Error()})
 		return "", ctx.Err()
 	}
 	if failed != nil {
-		client.AbortMultipart(init.UploadID, init.Key, init.NodeID, originalName, remotePath)
-		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: loaded, Total: size, Status: "error", Error: failed.Error()})
+		client.AbortMultipartCtx(context.Background(), init.UploadID, init.Key, init.NodeID, originalName, remotePath)
+		emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: loadedFinal, Total: size, Status: "error", Error: failed.Error()})
 		return "", failed
 	}
 	slices.SortFunc(results, func(a, b result) int { return a.Num - b.Num })
@@ -282,12 +261,16 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 			md5hex = h
 		}
 	}
-	fileID, err := client.CompleteMultipart(init.UploadID, init.Key, init.NodeID, originalName, remotePath, mimeType, size, parts, md5hex)
+	fileID, err := client.CompleteMultipartCtx(ctx, init.UploadID, init.Key, init.NodeID, originalName, remotePath, mimeType, size, parts, md5hex)
 	if err != nil {
 		emit("upload:progress", Progress{JobID: jobID, FileName: name, Total: size, Status: "error", Error: err.Error()})
 		return "", err
 	}
-	emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: size, Total: size, Percent: 100, Status: "done"})
+	var doneSpeed float64
+	if elapsed := time.Since(start).Seconds(); elapsed > 0 && size > 0 {
+		doneSpeed = float64(size) / elapsed
+	}
+	emit("upload:progress", Progress{JobID: jobID, FileName: name, Loaded: size, Total: size, Percent: 100, SpeedBps: doneSpeed, Status: "done"})
 	return fileID, nil
 }
 
@@ -431,9 +414,14 @@ func DownloadFileWithID(ctx context.Context, client *api.Client, fileID, destPat
 	return nil
 }
 
-func putPartAttempt(ctx context.Context, url string, f *os.File, offset, length int64, partNum int) (string, error) {
+func putPartAttempt(ctx context.Context, url, localPath string, offset, length int64, partNum int) (string, error) {
 	attemptCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
+	f, err := os.Open(localPath)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
 	sr := io.NewSectionReader(f, offset, length)
 	req, err := http.NewRequestWithContext(attemptCtx, http.MethodPut, url, sr)
 	if err != nil {

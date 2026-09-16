@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -111,6 +112,10 @@ type PartURL struct {
 }
 
 func (c *Client) req(method, p string, query map[string]string, body any) (*http.Response, error) {
+	return c.reqCtx(context.Background(), method, p, query, body)
+}
+
+func (c *Client) reqCtx(ctx context.Context, method, p string, query map[string]string, body any) (*http.Response, error) {
 	if c.BaseURL == "" {
 		return nil, fmt.Errorf("server URL not configured")
 	}
@@ -134,7 +139,7 @@ func (c *Client) req(method, p string, query map[string]string, body any) (*http
 		}
 		r = bytes.NewReader(raw)
 	}
-	httpReq, err := http.NewRequest(method, u.String(), r)
+	httpReq, err := http.NewRequestWithContext(ctx, method, u.String(), r)
 	if err != nil {
 		return nil, err
 	}
@@ -382,9 +387,9 @@ func (c *Client) ExtractArchiveStream(fileID, entryPath string, w io.Writer) err
 	return err
 }
 
-func (c *Client) InitMultipart(name string, size int64, mimeType, path string) (MultipartInit, error) {
+func (c *Client) InitMultipartCtx(ctx context.Context, name string, size int64, mimeType, path string) (MultipartInit, error) {
 	var out MultipartInit
-	resp, err := c.req(http.MethodPost, "/files/multipart/init", nil, map[string]any{
+	resp, err := c.reqCtx(ctx, http.MethodPost, "/files/multipart/init", nil, map[string]any{
 		"originalName": name,
 		"size":         size,
 		"mimeType":     mimeType,
@@ -396,11 +401,11 @@ func (c *Client) InitMultipart(name string, size int64, mimeType, path string) (
 	return out, decode(resp, &out)
 }
 
-func (c *Client) PresignedPartUrls(uploadID, key, nodeID, originalName, path string, numbers []int) ([]PartURL, error) {
+func (c *Client) PresignedPartUrlsCtx(ctx context.Context, uploadID, key, nodeID, originalName, path string, numbers []int) ([]PartURL, error) {
 	var wrapper struct {
 		Urls []PartURL `json:"urls"`
 	}
-	resp, err := c.req(http.MethodPost, "/files/multipart/presigned", nil, map[string]any{
+	resp, err := c.reqCtx(ctx, http.MethodPost, "/files/multipart/presigned", nil, map[string]any{
 		"uploadId":     uploadID,
 		"key":          key,
 		"nodeId":       nodeID,
@@ -414,7 +419,7 @@ func (c *Client) PresignedPartUrls(uploadID, key, nodeID, originalName, path str
 	return wrapper.Urls, decode(resp, &wrapper)
 }
 
-func (c *Client) CompleteMultipart(uploadID, key, nodeID, originalName, path, mimeType string, size int64, parts []map[string]any, md5 string) (string, error) {
+func (c *Client) CompleteMultipartCtx(ctx context.Context, uploadID, key, nodeID, originalName, path, mimeType string, size int64, parts []map[string]any, md5 string) (string, error) {
 	body := map[string]any{
 		"uploadId":     uploadID,
 		"key":          key,
@@ -428,7 +433,7 @@ func (c *Client) CompleteMultipart(uploadID, key, nodeID, originalName, path, mi
 	if md5 != "" {
 		body["md5"] = md5
 	}
-	resp, err := c.req(http.MethodPost, "/files/multipart/complete", nil, body)
+	resp, err := c.reqCtx(ctx, http.MethodPost, "/files/multipart/complete", nil, body)
 	if err != nil {
 		return "", err
 	}
@@ -448,8 +453,8 @@ func (c *Client) CompleteMultipart(uploadID, key, nodeID, originalName, path, mi
 	return wrapper.File.ID, nil
 }
 
-func (c *Client) AbortMultipart(uploadID, key, nodeID, originalName, path string) {
-	resp, err := c.req(http.MethodPost, "/files/multipart/abort", nil, map[string]any{
+func (c *Client) AbortMultipartCtx(ctx context.Context, uploadID, key, nodeID, originalName, path string) {
+	resp, err := c.reqCtx(ctx, http.MethodPost, "/files/multipart/abort", nil, map[string]any{
 		"uploadId":     uploadID,
 		"key":          key,
 		"nodeId":       nodeID,

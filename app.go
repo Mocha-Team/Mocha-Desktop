@@ -309,22 +309,44 @@ func (a *App) UploadPickedFiles(remotePath string) ([]string, error) {
 	if len(picked) == 0 {
 		return []string{}, nil
 	}
-	files := make([]transfers.BatchFile, 0, len(picked))
-	cancels := make([]context.CancelFunc, 0, len(picked))
+	type fileTask struct {
+		file   transfers.BatchFile
+		ctx    context.Context
+		cancel context.CancelFunc
+	}
+	tasks := make([]fileTask, 0, len(picked))
 	for _, p := range picked {
 		jobID := transfers.NewJobID("")
-		files = append(files, transfers.BatchFile{LocalPath: p, RemotePath: remotePath, JobID: jobID})
-		_, cancel := context.WithCancel(a.ctx)
+		f := transfers.BatchFile{LocalPath: p, RemotePath: remotePath, JobID: jobID}
+		ctx, cancel := context.WithCancel(a.ctx)
 		a.trackTransfer(jobID, cancel)
-		cancels = append(cancels, cancel)
+		tasks = append(tasks, fileTask{file: f, ctx: ctx, cancel: cancel})
 	}
 	emit := a.emit
-	results := transfers.UploadBatch(a.ctx, a.client, files, transfers.DefaultFileConcurrency, emit)
-	for i, f := range files {
-		a.untrackTransfer(f.JobID)
-		if i < len(cancels) {
-			cancels[i]()
-		}
+	concurrency := transfers.DefaultFileConcurrency
+	if concurrency < 1 {
+		concurrency = 1
+	}
+	if concurrency > len(tasks) {
+		concurrency = len(tasks)
+	}
+	sem := make(chan struct{}, concurrency)
+	var wg sync.WaitGroup
+	results := make([]transfers.BatchResult, len(tasks))
+	for i, t := range tasks {
+		wg.Add(1)
+		go func(i int, t fileTask) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			fileID, err := transfers.UploadFileWithID(t.ctx, a.client, t.file.LocalPath, t.file.RemotePath, t.file.JobID, emit)
+			results[i] = transfers.BatchResult{JobID: t.file.JobID, LocalPath: t.file.LocalPath, FileID: fileID, Err: err}
+		}(i, t)
+	}
+	wg.Wait()
+	for _, t := range tasks {
+		a.untrackTransfer(t.file.JobID)
+		t.cancel()
 	}
 	jobs := make([]string, 0, len(results))
 	var failed []string
