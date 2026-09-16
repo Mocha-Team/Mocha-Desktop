@@ -4,6 +4,8 @@ import (
 	"embed"
 	"runtime"
 
+	"mocha-desktop/backend/startup"
+
 	"github.com/wailsapp/wails/v2"
 	"github.com/wailsapp/wails/v2/pkg/options"
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
@@ -29,6 +31,7 @@ func main() {
 		},
 		BackgroundColour:  &options.RGBA{R: 12, G: 10, B: 9, A: 1},
 		HideWindowOnClose: true,
+		StartHidden:       startup.StartedHidden(),
 		SingleInstanceLock: &options.SingleInstanceLock{
 			UniqueId: "mocha-desktop",
 			OnSecondInstanceLaunch: func(secondInstanceData options.SecondInstanceData) {

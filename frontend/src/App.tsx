@@ -62,6 +62,7 @@ export default function App() {
   const [settingsDraft, setSettingsDraft] = useState("");
   const [settingsBusy, setSettingsBusy] = useState(false);
   const [menuSupported, setMenuSupported] = useState(true);
+  const [startupSupported, setStartupSupported] = useState(true);
   const [ignoreEditor, setIgnoreEditor] = useState<string | null>(null);
   const [ignoreDraft, setIgnoreDraft] = useState("");
   const [ignoreBusy, setIgnoreBusy] = useState(false);
@@ -204,6 +205,7 @@ export default function App() {
   useEffect(() => {
     void refreshStatus().then(() => setBooted(true));
     api.supportsContextMenu().then(setMenuSupported).catch(() => setMenuSupported(false));
+    api.supportsLaunchAtStartup().then(setStartupSupported).catch(() => setStartupSupported(false));
   }, [refreshStatus]);
 
   const debouncedQuery = useDeferredValue(query);
@@ -1050,6 +1052,14 @@ export default function App() {
                   desc="Windows right-click entry that uploads the selected file and copies a share link."
                   checked={!!settings?.contextMenu}
                   onChange={(v) => updateSettings({ contextMenu: v })}
+                />
+              )}
+              {startupSupported && (
+                <SettingRow
+                  title="Launch at startup"
+                  desc="Start Mocha Desktop in the tray when you sign in."
+                  checked={!!settings?.launchAtStartup}
+                  onChange={(v) => updateSettings({ launchAtStartup: v })}
                 />
               )}
               <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Global ignore patterns (one per line)</div>

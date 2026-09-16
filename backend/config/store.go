@@ -14,6 +14,7 @@ type Settings struct {
 	BidirectionalSync  bool     `json:"bidirectionalSync,omitempty"`
 	FilesView          string   `json:"filesView,omitempty"`
 	ContextMenuEnabled bool     `json:"contextMenu,omitempty"`
+	LaunchAtStartup    bool     `json:"launchAtStartup,omitempty"`
 }
 
 type FolderSettings struct {

@@ -14,6 +14,7 @@ import (
 	"mocha-desktop/backend/auth"
 	"mocha-desktop/backend/config"
 	"mocha-desktop/backend/contextmenu"
+	"mocha-desktop/backend/startup"
 	mosync "mocha-desktop/backend/sync"
 	"mocha-desktop/backend/transfers"
 
@@ -78,6 +79,9 @@ func (a *App) CancelTransfer(jobID string) error {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.view = viewMain
+	if startup.StartedHidden() {
+		a.view = viewHidden
+	}
 	cfg, _ := config.Load()
 	if cfg.ApiURL == "" {
 		cfg.ApiURL = DefaultAPIURL
@@ -89,6 +93,11 @@ func (a *App) startup(ctx context.Context) {
 	}
 	if !contextmenu.Supported() {
 		a.cfg.Settings.ContextMenuEnabled = false
+	}
+	if !startup.Supported() {
+		a.cfg.Settings.LaunchAtStartup = false
+	} else if a.cfg.Settings.LaunchAtStartup {
+		_ = startup.Enable()
 	}
 	if key, err := auth.LoadKey(); err == nil {
 		a.apiKey = key
@@ -296,6 +305,10 @@ func validName(name string) error {
 
 func (a *App) SupportsContextMenu() bool {
 	return contextmenu.Supported()
+}
+
+func (a *App) SupportsLaunchAtStartup() bool {
+	return startup.Supported()
 }
 
 func (a *App) UploadPickedFiles(remotePath string) ([]string, error) {
@@ -684,7 +697,11 @@ func (a *App) SaveSettings(s config.Settings) error {
 	if s.ContextMenuEnabled && !contextmenu.Supported() {
 		s.ContextMenuEnabled = false
 	}
+	if s.LaunchAtStartup && !startup.Supported() {
+		s.LaunchAtStartup = false
+	}
 	contextMenuChanged := s.ContextMenuEnabled != a.cfg.Settings.ContextMenuEnabled
+	startupChanged := s.LaunchAtStartup != a.cfg.Settings.LaunchAtStartup
 	a.cfg.Settings = s
 	if err := config.Save(a.cfg); err != nil {
 		return err
@@ -695,6 +712,15 @@ func (a *App) SaveSettings(s config.Settings) error {
 				return err
 			}
 		} else if err := contextmenu.Disable(); err != nil {
+			return err
+		}
+	}
+	if startupChanged {
+		if s.LaunchAtStartup {
+			if err := startup.Enable(); err != nil {
+				return err
+			}
+		} else if err := startup.Disable(); err != nil {
 			return err
 		}
 	}

@@ -57,6 +57,7 @@ export interface AppSettings {
   bidirectionalSync?: boolean;
   filesView?: string;
   contextMenu?: boolean;
+  launchAtStartup?: boolean;
 }
 
 export interface Profile {
@@ -295,6 +296,7 @@ export const api = {
   download: (id: string, name: string) => invoke<string>("DownloadTo", id, name),
   previewUrl: (id: string) => invoke<PreviewURL>("GetPreviewURL", id),
   supportsContextMenu: () => invoke<boolean>("SupportsContextMenu"),
+  supportsLaunchAtStartup: () => invoke<boolean>("SupportsLaunchAtStartup"),
   syncFolders: () => invoke<SyncFolder[]>("GetSyncFolders"),
   addSyncFolder: () => invoke<SyncFolder>("AddSyncFolder"),
   removeSyncFolder: (path: string) => invoke<void>("RemoveSyncFolder", path),
