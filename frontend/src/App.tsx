@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOff, EventsOn } from "../wailsjs/runtime/runtime";
-import { api, copyText, folderName, formatBytes, formatDate, formatSpeed, formatTime, isPreviewable, parseLines, type AppSettings, type ArchiveEntry, type FileItem, type Profile, type RemoveSyncPreview, type RemoveSyncResult, type Share, type Status, type StorageInfo, type SyncFolder, type TransferProgress, type TrashItem } from "./lib";
+import { api, copyText, folderName, formatBytes, formatDate, formatSpeed, formatTime, isPreviewable, parseLines, type AppSettings, type ArchiveEntry, type FileItem, type PairFile, type Profile, type RemotePickFile, type RemoveSyncPreview, type RemoveSyncResult, type Share, type Status, type StorageInfo, type SyncConflict, type SyncFolder, type TransferProgress, type TrashItem } from "./lib";
 import { useRevealRoot } from "./hooks";
 import { Titlebar } from "./Titlebar";
 import { Flyout } from "./Flyout";
@@ -34,6 +34,15 @@ export default function App() {
   const [shares, setShares] = useState<Share[]>([]);
   const [transfers, setTransfers] = useState<Record<string, TransferProgress>>({});
   const [syncFolders, setSyncFolders] = useState<SyncFolder[]>([]);
+  const [remoteOpen, setRemoteOpen] = useState(false);
+  const [remotePath, setRemotePath] = useState("/");
+  const [remoteFiles, setRemoteFiles] = useState<RemotePickFile[]>([]);
+  const [remoteChecked, setRemoteChecked] = useState<Set<string>>(new Set());
+  const [remoteLoading, setRemoteLoading] = useState(false);
+  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [pins, setPins] = useState<Record<string, Record<string, string>>>({});
+  const [pinsOpen, setPinsOpen] = useState<Set<string>>(new Set());
+  const [conflicts, setConflicts] = useState<Record<string, SyncConflict[]>>({});
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
@@ -541,12 +550,129 @@ export default function App() {
 
   async function addFolder() {
     try {
-      await api.addSyncFolder();
+      await api.addSyncFolderLocal();
       const s = await refreshStatus();
       setStatus(s);
       await refreshSync();
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Could not add folder");
+    }
+  }
+
+  function pairKeyFor(f: SyncFolder): string {
+    return f.pairId || f.path;
+  }
+
+  function pairFiles(f: SyncFolder): PairFile[] {
+    const key = pairKeyFor(f);
+    const m = pins[key] || {};
+    const rels = new Set<string>([...Object.keys(m), ...(f.queued || [])]);
+    return [...rels].sort().map((rel) => ({ rel, pin: m[rel] || "keep" }));
+  }
+
+  async function changeDirection(pairId: string, direction: string) {
+    try {
+      await api.setPairDirection(pairId, direction);
+      await refreshSync();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Direction failed");
+    }
+  }
+
+  async function togglePins(pairId: string) {
+    const open = new Set(pinsOpen);
+    if (open.has(pairId)) {
+      open.delete(pairId);
+      setPinsOpen(open);
+      return;
+    }
+    try {
+      const m = await api.getFilePins(pairId);
+      setPins((p) => ({ ...p, [pairId]: m || {} }));
+      open.add(pairId);
+      setPinsOpen(open);
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Pins failed");
+    }
+  }
+
+  async function togglePin(pairId: string, rel: string, current: string) {
+    try {
+      await api.setFilePin(pairId, rel, current === "cloud" ? "keep" : "cloud");
+      const m = await api.getFilePins(pairId);
+      setPins((p) => ({ ...p, [pairId]: m || {} }));
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Pin failed");
+    }
+  }
+
+  async function loadConflictsFor(pairId: string) {
+    try {
+      const list = await api.listConflicts(pairId);
+      setConflicts((c) => ({ ...c, [pairId]: list || [] }));
+      if ((list || []).length === 0) setNotice("No conflicts");
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Conflicts failed");
+    }
+  }
+
+  async function resolveFor(pairId: string, rel: string, choice: string) {
+    try {
+      await api.resolveConflict(pairId, rel, choice);
+      const list = await api.listConflicts(pairId);
+      setConflicts((c) => ({ ...c, [pairId]: list || [] }));
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Resolve failed");
+    }
+  }
+
+  async function loadRemote() {
+    const target = remotePath.trim() || "/";
+    setRemoteLoading(true);
+    try {
+      const list = await api.listRemoteForAttach(target);
+      setRemoteFiles(list || []);
+      setRemoteChecked(new Set((list || []).map((r) => r.rel)));
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Remote list failed");
+    } finally {
+      setRemoteLoading(false);
+    }
+  }
+
+  function toggleRemoteCheck(rel: string) {
+    setRemoteChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(rel)) next.delete(rel);
+      else next.add(rel);
+      return next;
+    });
+  }
+
+  function toggleAllRemote() {
+    setRemoteChecked((prev) => {
+      if (prev.size === remoteFiles.length) return new Set<string>();
+      return new Set(remoteFiles.map((r) => r.rel));
+    });
+  }
+
+  async function confirmRemote(close: () => void) {
+    const target = remotePath.trim() || "/";
+    if (remoteBusy) return;
+    setRemoteBusy(true);
+    try {
+      await api.addSyncFolderRemote(target, [...remoteChecked]);
+      close();
+      setRemoteOpen(false);
+      setRemoteFiles([]);
+      setRemoteChecked(new Set());
+      const s = await refreshStatus();
+      setStatus(s);
+      await refreshSync();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Attach failed");
+    } finally {
+      setRemoteBusy(false);
     }
   }
 
@@ -823,10 +949,13 @@ export default function App() {
                   <span className="text-[13px] text-mocha-secondary">
                     {syncFolders.length === 0 ? "No folders watched" : `${syncFolders.length} folder${syncFolders.length === 1 ? "" : "s"} watched`}
                   </span>
-                  <button onClick={addFolder} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
-                    Add folder
-                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110"><ArrowIcon /></span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button onClick={addFolder} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
+                      Add folder
+                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110"><ArrowIcon /></span>
+                    </button>
+                    <button onClick={() => { setRemoteOpen(true); setRemoteFiles([]); setRemoteChecked(new Set()); }} className="glass-button btn-ghost rounded-full px-4 py-2 text-[13px]">Attach remote</button>
+                  </div>
                 </div>
                 <div className="files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-1.5">
                   {syncFolders.map((f) => (
@@ -847,6 +976,43 @@ export default function App() {
                         <button onClick={() => void openIgnoreEditor(f.path)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">Ignores</button>
                         <button onClick={() => removeFolder(f.path)} className="glass-button shrink-0 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200">Remove</button>
                       </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-[11px] text-mocha-secondary">{f.direction || "upload-only"}</span>
+                        <select value={f.direction || "upload-only"} onChange={(e) => void changeDirection(pairKeyFor(f), e.target.value)} className="field rounded-full px-2 py-1 font-mono text-[11px]">
+                          <option value="upload-only">upload-only</option>
+                          <option value="download-only">download-only</option>
+                          <option value="mirror">mirror</option>
+                        </select>
+                        <button onClick={() => void togglePins(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Pins</button>
+                        <button onClick={() => void loadConflictsFor(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Conflicts</button>
+                      </div>
+                      {pinsOpen.has(pairKeyFor(f)) && (
+                        <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
+                          {pairFiles(f).map((pf) => (
+                            <div key={pf.rel} className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                              <span className="truncate text-mocha-muted">{pf.rel}</span>
+                              <button onClick={() => void togglePin(pairKeyFor(f), pf.rel, pf.pin)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1 text-[11px]">{pf.pin === "cloud" ? "Cloud" : "Keep"}</button>
+                            </div>
+                          ))}
+                          {pairFiles(f).length === 0 && (
+                            <div className="font-mono text-[11px] text-mocha-dim">No pinned files</div>
+                          )}
+                        </div>
+                      )}
+                      {(conflicts[pairKeyFor(f)] || []).length > 0 && (
+                        <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
+                          {(conflicts[pairKeyFor(f)] || []).map((c) => (
+                            <div key={c.rel} className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
+                              <span className="truncate text-mocha-secondary">{c.rel}</span>
+                              <span className="flex gap-1">
+                                <button onClick={() => void resolveFor(pairKeyFor(f), c.rel, "keep-local")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep local</button>
+                                <button onClick={() => void resolveFor(pairKeyFor(f), c.rel, "keep-remote")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep remote</button>
+                                <button onClick={() => void resolveFor(pairKeyFor(f), c.rel, "keep-both")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep both</button>
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                       {confirmRemove === f.path && !removePreview && (
                         <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
                           <div className="font-serif text-[15px] italic text-mocha-secondary">Stop syncing this folder?</div>
@@ -1135,6 +1301,44 @@ export default function App() {
                 <button onClick={() => void saveIgnoreEditor(close)} disabled={ignoreBusy} className="glass-button btn-gold flex-1 rounded-full py-2 text-sm font-semibold disabled:opacity-60">{ignoreBusy ? "Saving" : "Save"}</button>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm">Cancel</button>
               </div>
+            </div>
+          )}
+        </ModalShell>
+      )}
+
+      {remoteOpen && (
+        <ModalShell label="Attach remote folder" shellClassName="w-full max-w-lg" onClose={() => setRemoteOpen(false)}>
+          {(close) => (
+            <div className="bezel-core flex max-h-[70dvh] flex-col p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="truncate font-serif text-lg italic">Attach remote folder</div>
+                <button onClick={close} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Close</button>
+              </div>
+              <div className="mt-3 flex gap-2">
+                <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
+                <button onClick={() => void loadRemote()} disabled={remoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{remoteLoading ? "Loading" : "Load"}</button>
+              </div>
+              <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
+                {remoteFiles.map((rf) => (
+                  <label key={rf.rel} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
+                    <input type="checkbox" checked={remoteChecked.has(rf.rel)} onChange={() => toggleRemoteCheck(rf.rel)} className="h-4 w-4" />
+                    <span className="min-w-0 flex-1 truncate text-sm">{rf.rel}</span>
+                    <span className="shrink-0 font-mono text-[11px] text-mocha-muted">{formatBytes(rf.size)}</span>
+                  </label>
+                ))}
+                {!remoteLoading && remoteFiles.length === 0 && (
+                  <div className="py-6 text-center font-serif text-lg italic text-mocha-muted">Load a remote path to pick files</div>
+                )}
+              </div>
+              {remoteFiles.length > 0 && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                  <span className="font-mono text-[11px] text-mocha-muted">{remoteChecked.size} of {remoteFiles.length} checked</span>
+                  <span className="flex gap-2">
+                    <button onClick={toggleAllRemote} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Toggle all</button>
+                    <button onClick={() => void confirmRemote(close)} disabled={remoteBusy} className="glass-button btn-gold rounded-full px-4 py-1.5 text-sm font-semibold disabled:opacity-60">{remoteBusy ? "Attaching" : "Attach"}</button>
+                  </span>
+                </div>
+              )}
             </div>
           )}
         </ModalShell>

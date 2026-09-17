@@ -108,6 +108,8 @@ export interface TransferProgress {
 export interface SyncFolder {
   path: string;
   remotePath: string;
+  pairId: string;
+  direction: string;
   files: number;
   pending: number;
   status: string;
@@ -117,6 +119,31 @@ export interface SyncFolder {
   progress?: number;
   queued: string[];
   paused?: boolean;
+}
+
+export interface SyncPair {
+  pairId: string;
+  path: string;
+  remotePath: string;
+  direction: string;
+}
+
+export interface PairFile {
+  rel: string;
+  pin: string;
+  size?: number;
+}
+
+export interface RemotePickFile {
+  rel: string;
+  size: number;
+}
+
+export interface SyncConflict {
+  pairId: string;
+  rel: string;
+  localSize: number;
+  remoteSize: number;
 }
 
 export function isArchiveFile(f: Pick<FileItem, "original_name">): boolean {
@@ -299,6 +326,14 @@ export const api = {
   supportsLaunchAtStartup: () => invoke<boolean>("SupportsLaunchAtStartup"),
   syncFolders: () => invoke<SyncFolder[]>("GetSyncFolders"),
   addSyncFolder: () => invoke<SyncFolder>("AddSyncFolder"),
+  addSyncFolderLocal: () => invoke<SyncFolder>("AddSyncFolderLocal"),
+  listRemoteForAttach: (remotePath: string) => invoke<RemotePickFile[]>("ListRemoteForAttach", remotePath),
+  addSyncFolderRemote: (remotePath: string, checked: string[]) => invoke<SyncFolder>("AddSyncFolderRemote", remotePath, checked),
+  setPairDirection: (pairId: string, direction: string) => invoke<void>("SetPairDirection", pairId, direction),
+  listConflicts: (pairId: string) => invoke<SyncConflict[]>("ListConflicts", pairId),
+  resolveConflict: (pairId: string, rel: string, choice: string) => invoke<void>("ResolveConflict", pairId, rel, choice),
+  setFilePin: (pairId: string, rel: string, pin: string) => invoke<void>("SetFilePin", pairId, rel, pin),
+  getFilePins: (pairId: string) => invoke<Record<string, string>>("GetFilePins", pairId),
   removeSyncFolder: (path: string) => invoke<void>("RemoveSyncFolder", path),
   previewRemoveSyncFolder: (path: string) => invoke<RemoveSyncPreview>("PreviewRemoveSyncFolder", path),
   removeSyncFolderAndFiles: (path: string) => invoke<RemoveSyncResult>("RemoveSyncFolderAndFiles", path),
