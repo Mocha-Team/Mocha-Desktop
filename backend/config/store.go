@@ -138,7 +138,7 @@ func ValidatePair(p Pair) error {
 	if p.Direction != Direction("upload-only") && p.Direction != Direction("download-only") && p.Direction != Direction("mirror") {
 		return fmt.Errorf("direction required")
 	}
-	if strings.TrimSpace(p.RemotePath) == "" {
+	if strings.TrimSpace(p.RemotePath) == "" && p.Direction != Direction("upload-only") {
 		return fmt.Errorf("remote path required")
 	}
 	return nil
@@ -151,20 +151,21 @@ func ValidatePairs(pairs []Pair) error {
 			return err
 		}
 		clean := filepath.Clean(p.LocalPath)
+		key := strings.ToLower(clean)
 		for q := range seen {
-			if clean == q {
+			if key == q {
 				return fmt.Errorf("duplicate folder")
 			}
-			rel, err := filepath.Rel(q, clean)
-			if err == nil && rel != ".." && rel != "." {
+			rel, err := filepath.Rel(q, key)
+			if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("folder overlaps")
 			}
-			rel2, err2 := filepath.Rel(clean, q)
-			if err2 == nil && rel2 != ".." && rel2 != "." {
+			rel2, err2 := filepath.Rel(key, q)
+			if err2 == nil && rel2 != "." && rel2 != ".." && !strings.HasPrefix(rel2, ".."+string(filepath.Separator)) {
 				return fmt.Errorf("folder overlaps")
 			}
 		}
-		seen[clean] = true
+		seen[key] = true
 	}
 	return nil
 }
