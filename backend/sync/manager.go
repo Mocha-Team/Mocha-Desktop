@@ -2,12 +2,15 @@ package sync
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -84,10 +87,72 @@ type rootJob struct {
 	folderIgnorePatterns []string
 	opCancel             context.CancelFunc
 	lastRemotePoll       time.Time
+	remoteFails          int
+	remoteBackoffUntil   time.Time
+}
+
+func newOpaquePairID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return "pair-" + hex.EncodeToString(b[:])
+	}
+	return transfers.NewJobID("pair-")
+}
+
+func pinsFile(stateDir string) string {
+	return filepath.Join(stateDir, "pins.json")
+}
+
+func loadPinsFile(stateDir string) map[string]map[string]string {
+	out := map[string]map[string]string{}
+	if stateDir == "" {
+		return out
+	}
+	raw, err := os.ReadFile(pinsFile(stateDir))
+	if err != nil {
+		return out
+	}
+	_ = json.Unmarshal(raw, &out)
+	if out == nil {
+		out = map[string]map[string]string{}
+	}
+	return out
+}
+
+func savePinsFile(stateDir string, pins map[string]map[string]string) {
+	if stateDir == "" {
+		return
+	}
+	raw, _ := json.Marshal(pins)
+	tmp := pinsFile(stateDir) + ".mocha-tmp"
+	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
+		return
+	}
+	_ = os.Rename(tmp, pinsFile(stateDir))
+}
+
+func (m *Manager) persistPins() {
+	savePinsFile(m.stateDir, m.pins)
+}
+
+func normalizeRemoteBase(p string) string {
+	return strings.ToLower(strings.Trim(strings.TrimSpace(p), "/"))
+}
+
+func (m *Manager) addConflict(pairID, rel string, localSize, remoteSize int64) {
+	if pairID == "" || rel == "" {
+		return
+	}
+	for _, c := range m.conflicts[pairID] {
+		if c.Rel == rel {
+			return
+		}
+	}
+	m.conflicts[pairID] = append(m.conflicts[pairID], Conflict{PairID: pairID, Rel: rel, LocalSize: localSize, RemoteSize: remoteSize})
 }
 
 func NewManager(stateDir string, emit func(event string, payload any)) *Manager {
-	return &Manager{roots: map[string]*rootJob{}, emit: emit, stateDir: stateDir, conflicts: map[string][]Conflict{}, pins: map[string]map[string]string{}}
+	return &Manager{roots: map[string]*rootJob{}, emit: emit, stateDir: stateDir, conflicts: map[string][]Conflict{}, pins: loadPinsFile(stateDir)}
 }
 
 func (m *Manager) shouldPush(direction string) bool {
@@ -109,6 +174,12 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 	}
 	remoteBase := strings.Trim(strings.TrimSpace(p.RemotePath), "/")
 	m.mu.Lock()
+	for _, job := range m.roots {
+		if remoteBase != "" && normalizeRemoteBase(job.remoteBase) == normalizeRemoteBase(remoteBase) && !sameRoot(job.path, clean) {
+			m.mu.Unlock()
+			return FolderState{}, fmt.Errorf("duplicate remote")
+		}
+	}
 	_, exists := m.roots[clean]
 	m.mu.Unlock()
 	st, err := m.Add(clean)
@@ -128,7 +199,7 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 	}
 	job.pairID = p.ID
 	if job.pairID == "" {
-		job.pairID = strings.ToLower(clean)
+		job.pairID = newOpaquePairID()
 	}
 	job.direction = direction
 	if remoteBase != "" {
@@ -152,6 +223,13 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 	return st, nil
 }
 
+func sameRoot(a, b string) bool {
+	if goruntime.GOOS == "linux" {
+		return a == b
+	}
+	return strings.EqualFold(a, b)
+}
+
 func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked []string) (FolderState, error) {
 	base := strings.Trim(strings.TrimSpace(remotePath), "/")
 	if base == "" {
@@ -170,8 +248,11 @@ func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked 
 	if err := os.MkdirAll(clean, 0o755); err != nil {
 		return FolderState{}, err
 	}
+	if entries, err := os.ReadDir(clean); err == nil && len(entries) > 0 {
+		return FolderState{}, fmt.Errorf("folder not empty")
+	}
 	p := config.Pair{
-		ID:         strings.ToLower(clean),
+		ID:         newOpaquePairID(),
 		LocalPath:  clean,
 		RemotePath: "/" + base + "/",
 		Direction:  config.Direction(direction),
@@ -204,7 +285,8 @@ func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked 
 	}
 	tree, err := m.listRemoteTree(client, base)
 	if err != nil {
-		return st, err
+		m.Remove(clean)
+		return FolderState{}, err
 	}
 	m.mu.Lock()
 	if m.pins == nil {
@@ -220,6 +302,7 @@ func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked 
 		}
 	}
 	m.mu.Unlock()
+	m.persistPins()
 	return st, nil
 }
 
@@ -252,21 +335,49 @@ func (m *Manager) ResolveConflict(pairID, rel, choice string) error {
 		return fmt.Errorf("choice required")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	list := m.conflicts[pairID]
-	kept := make([]Conflict, 0, len(list))
 	found := false
 	for _, c := range list {
 		if c.Rel == rel {
 			found = true
+			break
+		}
+	}
+	if !found {
+		m.mu.Unlock()
+		return fmt.Errorf("conflict not found")
+	}
+	var rootPath string
+	for _, job := range m.roots {
+		if job.pairID == pairID {
+			rootPath = job.path
+			break
+		}
+	}
+	m.mu.Unlock()
+	if choice == "keep-both" && rootPath != "" && rel != "" {
+		src := filepath.Join(rootPath, filepath.FromSlash(filepath.ToSlash(strings.Trim(strings.TrimSpace(rel), "/"))))
+		if info, err := os.Stat(src); err == nil && !info.IsDir() {
+			ext := filepath.Ext(filepath.Base(rel))
+			stem := strings.TrimSuffix(rel, ext)
+			dstRel := stem + ".conflict-" + time.Now().Format("20060102-150405") + ext
+			dst := filepath.Join(rootPath, filepath.FromSlash(dstRel))
+			if raw, err := os.ReadFile(src); err == nil {
+				_ = os.MkdirAll(filepath.Dir(dst), 0o755)
+				_ = os.WriteFile(dst, raw, 0o644)
+			}
+		}
+	}
+	m.mu.Lock()
+	kept := make([]Conflict, 0, len(m.conflicts[pairID]))
+	for _, c := range m.conflicts[pairID] {
+		if c.Rel == rel {
 			continue
 		}
 		kept = append(kept, c)
 	}
-	if !found {
-		return fmt.Errorf("conflict not found")
-	}
 	m.conflicts[pairID] = kept
+	m.mu.Unlock()
 	return nil
 }
 
@@ -287,7 +398,6 @@ func (m *Manager) SetFilePin(pairID, rel, pin string) error {
 		return fmt.Errorf("pin required")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	if m.pins == nil {
 		m.pins = map[string]map[string]string{}
 	}
@@ -295,6 +405,8 @@ func (m *Manager) SetFilePin(pairID, rel, pin string) error {
 		m.pins[pairID] = map[string]string{}
 	}
 	m.pins[pairID][rel] = pin
+	m.mu.Unlock()
+	m.persistPins()
 	return nil
 }
 
@@ -359,7 +471,11 @@ func (m *Manager) SetGlobalIgnores(patterns []string) {
 }
 
 func (m *Manager) SetBidirectional(on bool, policy string) {
-	if policy == "" {
+	policy = strings.TrimSpace(strings.ToLower(policy))
+	if policy == "local-wins" {
+		policy = "remote-wins"
+	}
+	if policy != "remote-wins" {
 		policy = "skip"
 	}
 	m.mu.Lock()
@@ -420,6 +536,13 @@ func (m *Manager) resolveRoot(idOrPath string) (string, bool) {
 	clean := filepath.Clean(idOrPath)
 	if _, ok := m.roots[clean]; ok {
 		return clean, true
+	}
+	if goruntime.GOOS != "linux" {
+		for p := range m.roots {
+			if strings.EqualFold(p, clean) {
+				return p, true
+			}
+		}
 	}
 	return "", false
 }
@@ -515,7 +638,7 @@ func (m *Manager) Add(path string) (FolderState, error) {
 		base = m.uniqueRemoteBase(remoteBaseForFolder(clean, localComputerSegment()))
 	}
 	FilterSnapshot(snap, ignores)
-	pairID := strings.ToLower(clean)
+	pairID := newOpaquePairID()
 	job := &rootJob{
 		path:         clean,
 		remoteBase:   base,
@@ -592,9 +715,6 @@ type removeTarget struct {
 func collectRemoveTargets(snapshot Snapshot, remoteBase string) []removeTarget {
 	targets := make([]removeTarget, 0, len(snapshot))
 	for rel, st := range snapshot {
-		if st.Size == 0 {
-			continue
-		}
 		targets = append(targets, removeTarget{
 			id:   st.RemoteID,
 			rel:  rel,
@@ -966,6 +1086,7 @@ func (m *Manager) scanAndEnqueue(path string) {
 		return
 	}
 	ignores := append([]string{}, job.ignores...)
+	direction := job.direction
 	m.mu.Unlock()
 	snap, err := ScanWithIgnores(path, ignores)
 	if err != nil {
@@ -979,9 +1100,25 @@ func (m *Manager) scanAndEnqueue(path string) {
 		return
 	}
 	job.status.Files = len(snap)
+	if direction != "" && !m.shouldPush(direction) {
+		job.queue = []string{}
+		job.queued = map[string]bool{}
+		job.status.Pending = 0
+		m.mu.Unlock()
+		m.update(path, func(s *FolderState) {
+			if s.Paused {
+				s.Status = "paused"
+				return
+			}
+			if s.Status == "scanning" {
+				s.Status = "idle"
+			}
+		})
+		return
+	}
 	old := job.state
 	m.mu.Unlock()
-	added, modified := Diff(old, snap)
+	added, modified := DiffWithHash(old, snap)
 	for _, rel := range append(added, modified...) {
 		m.enqueue(path, rel)
 	}
@@ -1015,6 +1152,12 @@ func (m *Manager) serve(job *rootJob) {
 			}
 			m.handleEvent(job, ev)
 		case <-ticker.C:
+			m.mu.Lock()
+			idle := len(job.queue) == 0 && job.status.Status == "idle"
+			m.mu.Unlock()
+			if idle {
+				continue
+			}
 			go m.pump(job)
 		case <-remoteTicker.C:
 			go m.maybePullRemote(job)
@@ -1028,12 +1171,26 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 	}
 	if ev.Type == "deleted" {
 		m.mu.Lock()
+		prev, tracked := job.state[ev.Path]
 		delete(job.state, ev.Path)
 		st := job.state
 		file := job.stateFile
 		base := job.remoteBase
+		direction := job.direction
+		client := m.client
 		m.mu.Unlock()
 		SaveSyncState(file, st, base)
+		if tracked && prev.RemoteID != "" && m.shouldPush(direction) && client != nil && client.APIKey != "" && client.BaseURL != "" {
+			go func(id string) {
+				for attempt := 0; attempt < 3; attempt++ {
+					if err := client.DeleteFile(id); err == nil {
+						return
+					}
+					time.Sleep(time.Duration(1<<attempt) * time.Second)
+				}
+				m.update(job.path, func(s *FolderState) { s.Error = "remote cleanup failed, retrying" })
+			}(prev.RemoteID)
+		}
 		return
 	}
 	local := filepath.Join(job.path, filepath.FromSlash(ev.Path))
@@ -1071,16 +1228,37 @@ func (m *Manager) maybePullRemote(job *rootJob) {
 	m.mu.Lock()
 	paused := job.paused
 	last := job.lastRemotePoll
+	backoffUntil := job.remoteBackoffUntil
+	idle := len(job.queue) == 0 && job.status.Status == "idle"
 	m.mu.Unlock()
-	if paused || time.Since(last) < 30*time.Second {
+	interval := 30 * time.Second
+	if idle {
+		interval = 90 * time.Second
+	}
+	if paused || time.Since(last) < interval || time.Now().Before(backoffUntil) {
 		return
 	}
 	if err := m.pullRemote(job, client, policy); err != nil {
+		m.mu.Lock()
+		if j, exists := m.roots[job.path]; exists {
+			j.remoteFails++
+			shift := j.remoteFails
+			if shift > 4 {
+				shift = 4
+			}
+			j.remoteBackoffUntil = time.Now().Add(time.Duration(30<<shift) * time.Second)
+			if j.remoteBackoffUntil.Sub(time.Now()) > 5*time.Minute {
+				j.remoteBackoffUntil = time.Now().Add(5 * time.Minute)
+			}
+		}
+		m.mu.Unlock()
 		return
 	}
 	m.mu.Lock()
 	if j, exists := m.roots[job.path]; exists {
 		j.lastRemotePoll = time.Now()
+		j.remoteFails = 0
+		j.remoteBackoffUntil = time.Time{}
 	}
 	m.mu.Unlock()
 }
@@ -1156,7 +1334,7 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 	pairID := job.pairID
 	m.mu.Unlock()
 	for rel, rf := range remote {
-		if rf.size == 0 || MatchIgnore(rel, ignores) {
+		if MatchIgnore(rel, ignores) {
 			continue
 		}
 		if !m.shouldDownload(pairID, rel) {
@@ -1172,7 +1350,23 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 		} else if info.IsDir() {
 			continue
 		} else if info.Size() != rf.size {
-			if policy == "skip" {
+			base, tracked := state[rel]
+			if tracked {
+				localState := FileState{Size: info.Size(), ModTime: info.ModTime().UnixNano(), Hash: base.Hash}
+				remoteState := FileState{Size: rf.size, Hash: ""}
+				if BothChanged(localState, remoteState, base) {
+					m.mu.Lock()
+					m.addConflict(pairID, rel, info.Size(), rf.size)
+					m.mu.Unlock()
+					if policy == "skip" {
+						continue
+					}
+				}
+			}
+			if policy == "skip" && !tracked {
+				m.mu.Lock()
+				m.addConflict(pairID, rel, info.Size(), rf.size)
+				m.mu.Unlock()
 				continue
 			}
 			needsDownload = true
@@ -1212,6 +1406,7 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 				}
 				prev.Size = info.Size()
 				prev.ModTime = info.ModTime().UnixNano()
+				prev.RemoteModTime = info.ModTime().UnixNano()
 				j.state[rel] = prev
 				SaveSyncState(j.stateFile, j.state, j.remoteBase)
 				j.status.LastSync = time.Now().Unix()
@@ -1337,6 +1532,13 @@ func (m *Manager) pump(job *rootJob) {
 		return
 	}
 	if job.direction != "" && !m.shouldPush(job.direction) {
+		job.queue = []string{}
+		job.queued = map[string]bool{}
+		job.status.Pending = 0
+		if job.status.Status == "syncing" {
+			job.status.Status = "idle"
+			job.status.Current = ""
+		}
 		m.mu.Unlock()
 		return
 	}
@@ -1390,7 +1592,6 @@ func (m *Manager) pump(job *rootJob) {
 		rel     string
 		missing bool
 		isDir   bool
-		empty   bool
 		modTime int64
 		fileID  string
 		err     error
@@ -1412,10 +1613,6 @@ func (m *Manager) pump(job *rootJob) {
 			}
 			if info.IsDir() {
 				outcomes[i] = outcome{rel: rel, isDir: true}
-				return
-			}
-			if info.Size() == 0 {
-				outcomes[i] = outcome{rel: rel, empty: true, modTime: info.ModTime().UnixNano()}
 				return
 			}
 			jobID := transfers.NewJobID("sync-")
@@ -1495,9 +1692,6 @@ func (m *Manager) pump(job *rootJob) {
 				dirty = true
 			}
 		case o.isDir:
-		case o.empty:
-			j.state[o.rel] = FileState{Size: 0, ModTime: o.modTime}
-			dirty = true
 		case o.err != nil:
 			if opCtx.Err() != nil || job.ctx.Err() != nil {
 				if !j.queued[o.rel] {
@@ -1517,9 +1711,10 @@ func (m *Manager) pump(job *rootJob) {
 		default:
 			delete(j.attempts, o.rel)
 			if fi, serr := os.Stat(filepath.Join(job.path, filepath.FromSlash(o.rel))); serr == nil && !fi.IsDir() {
-				st := FileState{Size: fi.Size(), ModTime: fi.ModTime().UnixNano()}
+				st := FileState{Size: fi.Size(), ModTime: fi.ModTime().UnixNano(), RemoteModTime: fi.ModTime().UnixNano()}
 				if prev, exists := j.state[o.rel]; exists {
 					st.RemoteID = prev.RemoteID
+					st.Hash = prev.Hash
 				}
 				if o.fileID != "" {
 					st.RemoteID = o.fileID

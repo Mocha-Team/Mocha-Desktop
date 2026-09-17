@@ -112,8 +112,14 @@ func (a *App) startup(ctx context.Context) {
 	a.syncMgr.SetPauseMode(a.cfg.Settings.PauseMode)
 	a.syncMgr.SetGlobalIgnores(a.cfg.Settings.GlobalIgnores)
 	a.syncMgr.SetBidirectional(a.cfg.Settings.BidirectionalSync, a.cfg.Settings.ConflictPolicy)
-	for _, root := range a.cfg.SyncFolders {
-		_, _ = a.addSyncRoot(root)
+	if len(a.cfg.Pairs) > 0 {
+		for _, p := range a.cfg.Pairs {
+			_, _ = a.syncMgr.AddWithPair(p)
+		}
+	} else {
+		for _, root := range a.cfg.SyncFolders {
+			_, _ = a.addSyncRoot(root)
+		}
 	}
 	for p, fs := range a.cfg.FolderSettings {
 		clean := filepath.Clean(p)
@@ -150,6 +156,16 @@ func (a *App) sendHeartbeat() {
 	}
 	folders := make([]api.SyncHeartbeatFolder, 0)
 	for _, f := range a.syncMgr.List() {
+		pins := a.syncMgr.GetFilePins(f.PairID)
+		keep := 0
+		cloud := 0
+		for _, v := range pins {
+			if v == "cloud" {
+				cloud++
+			} else {
+				keep++
+			}
+		}
 		folders = append(folders, api.SyncHeartbeatFolder{
 			PairID:     f.PairID,
 			LocalPath:  f.Path,
@@ -159,6 +175,8 @@ func (a *App) sendHeartbeat() {
 			Files:      f.Files,
 			Pending:    f.Pending,
 			LastSync:   f.LastSync,
+			PinKeep:    keep,
+			PinCloud:   cloud,
 		})
 	}
 	_ = a.client.HeartbeatComputer(host, goruntime.GOOS, desktopAppVersion, folders)
@@ -576,9 +594,16 @@ func (a *App) AddSyncFolder() (mosync.FolderState, error) {
 	return st, err
 }
 
-func (a *App) AddSyncFolderLocal() (mosync.FolderState, error) {
+func (a *App) AddSyncFolderLocal(direction string) (mosync.FolderState, error) {
 	if a.syncMgr == nil {
 		return mosync.FolderState{}, fmt.Errorf("sync not ready")
+	}
+	direction = strings.TrimSpace(strings.ToLower(direction))
+	if direction == "local-wins" {
+		direction = "remote-wins"
+	}
+	if direction != "download-only" && direction != "mirror" {
+		direction = "upload-only"
 	}
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Watch folder", CanCreateDirectories: true})
 	if err != nil {
@@ -588,7 +613,7 @@ func (a *App) AddSyncFolderLocal() (mosync.FolderState, error) {
 		return mosync.FolderState{}, fmt.Errorf("no folder selected")
 	}
 	clean := filepath.Clean(dir)
-	p := config.Pair{ID: strings.ToLower(clean), LocalPath: clean, RemotePath: "", Direction: config.Direction("upload-only"), PinDefault: "keep"}
+	p := config.Pair{ID: config.NewPairID(), LocalPath: clean, RemotePath: "", Direction: config.Direction(direction), PinDefault: "keep"}
 	st, err := a.syncMgr.AddWithPair(p)
 	if err != nil {
 		return st, err
@@ -598,12 +623,16 @@ func (a *App) AddSyncFolderLocal() (mosync.FolderState, error) {
 	return st, nil
 }
 
-func (a *App) AddSyncFolderRemote(remotePath string, checked []string) (mosync.FolderState, error) {
+func (a *App) AddSyncFolderRemote(remotePath string, checked []string, direction string) (mosync.FolderState, error) {
 	if a.syncMgr == nil {
 		return mosync.FolderState{}, fmt.Errorf("sync not ready")
 	}
 	if strings.TrimSpace(remotePath) == "" {
 		return mosync.FolderState{}, fmt.Errorf("remote path required")
+	}
+	direction = strings.TrimSpace(strings.ToLower(direction))
+	if direction != "upload-only" && direction != "download-only" && direction != "mirror" {
+		direction = "mirror"
 	}
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Attach to folder", CanCreateDirectories: true})
 	if err != nil {
@@ -612,12 +641,15 @@ func (a *App) AddSyncFolderRemote(remotePath string, checked []string) (mosync.F
 	if dir == "" {
 		return mosync.FolderState{}, fmt.Errorf("no folder selected")
 	}
-	st, err := a.syncMgr.AttachRemote(remotePath, dir, "mirror", checked)
+	st, err := a.syncMgr.AttachRemote(remotePath, dir, direction, checked)
 	if err != nil {
 		return st, err
 	}
 	clean := filepath.Clean(dir)
-	p := config.Pair{ID: strings.ToLower(clean), LocalPath: clean, RemotePath: remotePath, Direction: config.Direction("mirror"), PinDefault: "keep"}
+	p := config.Pair{ID: st.PairID, LocalPath: clean, RemotePath: remotePath, Direction: config.Direction(direction), PinDefault: "keep"}
+	if p.ID == "" {
+		p.ID = config.NewPairID()
+	}
 	a.rememberPair(p, st)
 	go a.sendHeartbeat()
 	return st, nil
@@ -695,7 +727,7 @@ func (a *App) rememberPair(p config.Pair, st mosync.FolderState) {
 		id = st.PairID
 	}
 	if id == "" {
-		id = strings.ToLower(clean)
+		id = config.NewPairID()
 	}
 	exists := false
 	for _, q := range a.cfg.Pairs {
@@ -895,7 +927,10 @@ func (a *App) SaveSettings(s config.Settings) error {
 		s.PauseMode = "drain"
 	}
 	s.ConflictPolicy = strings.TrimSpace(strings.ToLower(s.ConflictPolicy))
-	if s.ConflictPolicy != "local-wins" {
+	if s.ConflictPolicy == "local-wins" {
+		s.ConflictPolicy = "remote-wins"
+	}
+	if s.ConflictPolicy != "remote-wins" {
 		s.ConflictPolicy = "skip"
 	}
 	if s.FilesView != "grid" {
@@ -947,7 +982,7 @@ func (a *App) SetSyncPaused(path string, paused bool) error {
 		return fmt.Errorf("sync not ready")
 	}
 	clean, _ := a.resolvePairPath(path)
-	a.syncMgr.SetPaused(path, paused)
+	a.syncMgr.SetPaused(clean, paused)
 	if a.cfg.FolderSettings == nil {
 		a.cfg.FolderSettings = map[string]config.FolderSettings{}
 	}

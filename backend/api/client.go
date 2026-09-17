@@ -546,6 +546,8 @@ type SyncHeartbeatFolder struct {
 	Files      int    `json:"files"`
 	Pending    int    `json:"pending"`
 	LastSync   int64  `json:"lastSync"`
+	PinKeep    int    `json:"pinKeep"`
+	PinCloud   int    `json:"pinCloud"`
 }
 
 func (c *Client) HeartbeatComputer(computerName, platform, appVersion string, folders []SyncHeartbeatFolder) error {

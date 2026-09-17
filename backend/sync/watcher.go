@@ -217,10 +217,17 @@ func DiffWithHash(old, next Snapshot) (added, modified []string) {
 			added = append(added, k)
 			continue
 		}
-		if o.Size != v.Size || o.Hash != v.Hash {
-			if o.Hash == "" && v.Hash == "" && o.ModTime == v.ModTime && o.Size == v.Size {
-				continue
+		if o.Size != v.Size {
+			modified = append(modified, k)
+			continue
+		}
+		if o.Hash != "" && v.Hash != "" {
+			if o.Hash != v.Hash {
+				modified = append(modified, k)
 			}
+			continue
+		}
+		if o.ModTime != v.ModTime || o.Hash != v.Hash {
 			modified = append(modified, k)
 		}
 	}
@@ -228,7 +235,7 @@ func DiffWithHash(old, next Snapshot) (added, modified []string) {
 }
 
 func BothChanged(local, remote, base FileState) bool {
-	localChanged := local.Size != base.Size || local.Hash != base.Hash
+	localChanged := local.Size != base.Size || local.ModTime != base.ModTime || local.Hash != base.Hash
 	remoteChanged := remote.Size != base.Size || remote.Hash != base.Hash
 	return localChanged && remoteChanged
 }

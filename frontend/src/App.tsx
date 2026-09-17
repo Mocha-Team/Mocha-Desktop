@@ -566,9 +566,12 @@ export default function App() {
     if (await persistSettings(next)) setNotice("Settings saved");
   }
 
+  const [localDirection, setLocalDirection] = useState("upload-only");
+  const [remoteDirection, setRemoteDirection] = useState("mirror");
+
   async function addFolder() {
     try {
-      await api.addSyncFolderLocal();
+      await api.addSyncFolderLocal(localDirection);
       const s = await refreshStatus();
       setStatus(s);
       await refreshSync();
@@ -578,7 +581,7 @@ export default function App() {
   }
 
   function pairKeyFor(f: SyncFolder): string {
-    return f.pairId || f.path;
+    return (f.pairId || f.path || "").toLowerCase();
   }
 
   function pairFiles(f: SyncFolder): PairFile[] {
@@ -679,7 +682,7 @@ export default function App() {
     if (remoteBusy) return;
     setRemoteBusy(true);
     try {
-      await api.addSyncFolderRemote(target, [...remoteChecked]);
+      await api.addSyncFolderRemote(target, [...remoteChecked], remoteDirection);
       close();
       setRemoteOpen(false);
       setRemoteFiles([]);
@@ -982,6 +985,11 @@ export default function App() {
                     {syncFolders.length === 0 ? "No folders watched" : `${syncFolders.length} folder${syncFolders.length === 1 ? "" : "s"} watched`}
                   </span>
                   <div className="flex items-center gap-2">
+                    <select value={localDirection} onChange={(e) => setLocalDirection(e.target.value)} className="field rounded-full px-2 py-1 font-mono text-[11px]">
+                      <option value="upload-only">upload-only</option>
+                      <option value="download-only">download-only</option>
+                      <option value="mirror">mirror</option>
+                    </select>
                     <button onClick={addFolder} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
                       Add folder
                       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110"><ArrowIcon /></span>
@@ -1229,8 +1237,8 @@ export default function App() {
               <SettingRow
                 title="Remote wins conflicts"
                 desc="On: download overwrites local. Off: skip on conflict."
-                checked={settings?.conflictPolicy === "local-wins"}
-                onChange={(v) => updateSettings({ conflictPolicy: v ? "local-wins" : "skip" })}
+                checked={settings?.conflictPolicy === "remote-wins"}
+                onChange={(v) => updateSettings({ conflictPolicy: v ? "remote-wins" : "skip" })}
               />
               {menuSupported && (
                 <SettingRow
@@ -1355,6 +1363,11 @@ export default function App() {
               </div>
               <div className="mt-3 flex gap-2">
                 <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
+                <select value={remoteDirection} onChange={(e) => setRemoteDirection(e.target.value)} className="field rounded-2xl px-2 py-2 font-mono text-xs">
+                  <option value="upload-only">upload-only</option>
+                  <option value="download-only">download-only</option>
+                  <option value="mirror">mirror</option>
+                </select>
                 <button onClick={() => void loadRemote()} disabled={remoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{remoteLoading ? "Loading" : "Load"}</button>
               </div>
               <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">

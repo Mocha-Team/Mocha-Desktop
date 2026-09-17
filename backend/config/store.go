@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/rand"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -123,7 +126,7 @@ func MigratePairs(s Store) Store {
 		s.Pairs = append(s.Pairs, Pair{
 			ID:         newPairID(clean),
 			LocalPath:  clean,
-			RemotePath: "",
+			RemotePath: migrateRemotePath(clean),
 			Direction:  Direction("upload-only"),
 			PinDefault: "keep",
 		})
@@ -146,6 +149,7 @@ func ValidatePair(p Pair) error {
 
 func ValidatePairs(pairs []Pair) error {
 	seen := map[string]bool{}
+	seenRemote := map[string]bool{}
 	for _, p := range pairs {
 		if err := ValidatePair(p); err != nil {
 			return err
@@ -166,16 +170,76 @@ func ValidatePairs(pairs []Pair) error {
 			}
 		}
 		seen[key] = true
+		rb := strings.ToLower(strings.Trim(strings.TrimSpace(p.RemotePath), "/"))
+		if rb != "" {
+			if seenRemote[rb] {
+				return fmt.Errorf("duplicate remote")
+			}
+			seenRemote[rb] = true
+		}
 	}
 	return nil
 }
 
 func newPairID(clean string) string {
-	base := strings.ToLower(strings.TrimSpace(clean))
-	if base == "" {
-		base = "pair"
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return "pair-" + hex.EncodeToString(b[:])
 	}
-	return base
+	h := sha1.Sum([]byte(clean))
+	return "pair-" + hex.EncodeToString(h[:])[:12]
+}
+
+func NewPairID() string {
+	return newPairID("")
+}
+
+func migrateRemotePath(clean string) string {
+	if base := remoteBaseFromState(clean); base != "" {
+		return "/" + strings.Trim(base, "/") + "/"
+	}
+	host, _ := os.Hostname()
+	comp := sanitizeSegment(host, 60)
+	if comp == "" {
+		comp = "unknown"
+	}
+	name := sanitizeSegment(filepath.Base(clean), 80)
+	if name == "" {
+		name = "Sync"
+	}
+	return "/Computers/" + comp + "/" + name + "/"
+}
+
+func remoteBaseFromState(clean string) string {
+	d, err := Dir()
+	if err != nil {
+		return ""
+	}
+	h := sha1.Sum([]byte(clean))
+	name := "sync-" + hex.EncodeToString(h[:])[:16] + ".json"
+	raw, err := os.ReadFile(filepath.Join(d, name))
+	if err != nil {
+		return ""
+	}
+	var ps struct {
+		RemoteBase string `json:"remoteBase"`
+	}
+	if err := json.Unmarshal(raw, &ps); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(ps.RemoteBase)
+}
+
+func sanitizeSegment(value string, maxLen int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > maxLen {
+		runes = runes[:maxLen]
+	}
+	cleaned := strings.Trim(strings.Trim(string(runes), "."), " ")
+	for _, r := range []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"} {
+		cleaned = strings.ReplaceAll(cleaned, r, "-")
+	}
+	return strings.TrimSpace(cleaned)
 }
 
 func ApiBase(s Store) string {
