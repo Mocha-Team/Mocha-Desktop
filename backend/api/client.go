@@ -538,8 +538,10 @@ func (c *Client) DeleteShare(token string) error {
 }
 
 type SyncHeartbeatFolder struct {
+	PairID     string `json:"pairId"`
 	LocalPath  string `json:"localPath"`
 	RemotePath string `json:"remotePath"`
+	Direction  string `json:"direction"`
 	Status     string `json:"status"`
 	Files      int    `json:"files"`
 	Pending    int    `json:"pending"`

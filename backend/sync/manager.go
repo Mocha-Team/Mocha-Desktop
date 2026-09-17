@@ -14,12 +14,15 @@ import (
 	"time"
 
 	"mocha-desktop/backend/api"
+	"mocha-desktop/backend/config"
 	"mocha-desktop/backend/transfers"
 )
 
 type FolderState struct {
 	Path       string   `json:"path"`
 	RemotePath string   `json:"remotePath"`
+	PairID     string   `json:"pairId"`
+	Direction  string   `json:"direction"`
 	Files      int      `json:"files"`
 	Pending    int      `json:"pending"`
 	Status     string   `json:"status"`
@@ -29,6 +32,18 @@ type FolderState struct {
 	Progress   float64  `json:"progress,omitempty"`
 	Queued     []string `json:"queued"`
 	Paused     bool     `json:"paused,omitempty"`
+}
+
+type Conflict struct {
+	PairID     string `json:"pairId"`
+	Rel        string `json:"rel"`
+	LocalSize  int64  `json:"localSize"`
+	RemoteSize int64  `json:"remoteSize"`
+}
+
+type RemotePickFile struct {
+	Rel  string `json:"rel"`
+	Size int64  `json:"size"`
 }
 
 type Manager struct {
@@ -41,11 +56,15 @@ type Manager struct {
 	globalIgnores  []string
 	bidirectional  bool
 	conflictPolicy string
+	conflicts      map[string][]Conflict
+	pins           map[string]map[string]string
 }
 
 type rootJob struct {
 	path                 string
 	remoteBase           string
+	pairID               string
+	direction            string
 	ctx                  context.Context
 	stateFile            string
 	state                Snapshot
@@ -68,7 +87,174 @@ type rootJob struct {
 }
 
 func NewManager(stateDir string, emit func(event string, payload any)) *Manager {
-	return &Manager{roots: map[string]*rootJob{}, emit: emit, stateDir: stateDir}
+	return &Manager{roots: map[string]*rootJob{}, emit: emit, stateDir: stateDir, conflicts: map[string][]Conflict{}, pins: map[string]map[string]string{}}
+}
+
+func (m *Manager) shouldPush(direction string) bool {
+	return direction == "upload-only" || direction == "mirror"
+}
+
+func (m *Manager) shouldPull(direction string) bool {
+	return direction == "download-only" || direction == "mirror"
+}
+
+func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
+	if err := config.ValidatePair(p); err != nil {
+		return FolderState{}, err
+	}
+	clean := filepath.Clean(p.LocalPath)
+	direction := string(p.Direction)
+	if direction == "" {
+		direction = "upload-only"
+	}
+	remoteBase := strings.Trim(strings.TrimSpace(p.RemotePath), "/")
+	st, err := m.Add(clean)
+	if err != nil {
+		return st, err
+	}
+	m.mu.Lock()
+	job, ok := m.roots[clean]
+	if !ok {
+		m.mu.Unlock()
+		return st, nil
+	}
+	job.pairID = p.ID
+	if job.pairID == "" {
+		job.pairID = strings.ToLower(clean)
+	}
+	job.direction = direction
+	if remoteBase != "" {
+		job.remoteBase = remoteBase
+		job.status.RemotePath = remotePathForBase(remoteBase)
+	}
+	job.status.PairID = job.pairID
+	job.status.Direction = job.direction
+	if m.conflicts == nil {
+		m.conflicts = map[string][]Conflict{}
+	}
+	if m.pins == nil {
+		m.pins = map[string]map[string]string{}
+	}
+	if _, ok := m.pins[job.pairID]; !ok {
+		m.pins[job.pairID] = map[string]string{}
+	}
+	st = job.status
+	m.mu.Unlock()
+	m.broadcast()
+	return st, nil
+}
+
+func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked []string) (FolderState, error) {
+	base := strings.Trim(strings.TrimSpace(remotePath), "/")
+	if base == "" {
+		return FolderState{}, fmt.Errorf("remote path required")
+	}
+	clean := filepath.Clean(strings.TrimSpace(localPath))
+	if clean == "" || clean == "." {
+		return FolderState{}, fmt.Errorf("local path required")
+	}
+	if direction == "" {
+		direction = "mirror"
+	}
+	if direction != "upload-only" && direction != "download-only" && direction != "mirror" {
+		return FolderState{}, fmt.Errorf("direction required")
+	}
+	if err := os.MkdirAll(clean, 0o755); err != nil {
+		return FolderState{}, err
+	}
+	p := config.Pair{
+		ID:         strings.ToLower(clean),
+		LocalPath:  clean,
+		RemotePath: "/" + base + "/",
+		Direction:  config.Direction(direction),
+		PinDefault: "keep",
+	}
+	st, err := m.AddWithPair(p)
+	if err != nil {
+		return st, err
+	}
+	m.mu.Lock()
+	job, ok := m.roots[clean]
+	client := m.client
+	pairID := ""
+	if ok {
+		pairID = job.pairID
+	}
+	m.mu.Unlock()
+	if !ok || pairID == "" {
+		return st, nil
+	}
+	keep := map[string]bool{}
+	for _, rel := range checked {
+		r := filepath.ToSlash(strings.Trim(strings.TrimSpace(rel), "/"))
+		if r != "" {
+			keep[r] = true
+		}
+	}
+	if client == nil || client.APIKey == "" || client.BaseURL == "" {
+		return st, nil
+	}
+	tree, err := m.listRemoteTree(client, base)
+	if err != nil {
+		return st, nil
+	}
+	m.mu.Lock()
+	if m.pins == nil {
+		m.pins = map[string]map[string]string{}
+	}
+	if m.pins[pairID] == nil {
+		m.pins[pairID] = map[string]string{}
+	}
+	for rel := range tree {
+		r := filepath.ToSlash(rel)
+		if !keep[r] {
+			m.pins[pairID][r] = "cloud"
+		}
+	}
+	m.mu.Unlock()
+	return st, nil
+}
+
+func (m *Manager) SetDirection(pairID, direction string) error {
+	if direction != "upload-only" && direction != "download-only" && direction != "mirror" {
+		return fmt.Errorf("direction required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, job := range m.roots {
+		if job.pairID == pairID {
+			job.direction = direction
+			job.status.Direction = direction
+			return nil
+		}
+	}
+	return fmt.Errorf("pair not found")
+}
+
+func (m *Manager) ListRemoteForAttach(remotePath string) ([]RemotePickFile, error) {
+	base := strings.Trim(strings.TrimSpace(remotePath), "/")
+	if base == "" {
+		return nil, fmt.Errorf("remote path required")
+	}
+	m.mu.Lock()
+	client := m.client
+	m.mu.Unlock()
+	if client == nil || client.APIKey == "" || client.BaseURL == "" {
+		return nil, fmt.Errorf("not connected")
+	}
+	tree, err := m.listRemoteTree(client, base)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]RemotePickFile, 0, len(tree))
+	for rel, rf := range tree {
+		if rf.size == 0 {
+			continue
+		}
+		out = append(out, RemotePickFile{Rel: filepath.ToSlash(rel), Size: rf.size})
+	}
+	slices.SortFunc(out, func(a, b RemotePickFile) int { return strings.Compare(a.Rel, b.Rel) })
+	return out, nil
 }
 
 func (m *Manager) SetClient(c *api.Client) {
@@ -239,16 +425,19 @@ func (m *Manager) Add(path string) (FolderState, error) {
 		base = m.uniqueRemoteBase(remoteBaseForFolder(clean, localComputerSegment()))
 	}
 	FilterSnapshot(snap, ignores)
+	pairID := strings.ToLower(clean)
 	job := &rootJob{
 		path:         clean,
 		remoteBase:   base,
+		pairID:       pairID,
+		direction:    "upload-only",
 		ctx:          ctx,
 		stateFile:    stateFile,
 		state:        snap,
 		queue:        []string{},
 		queued:       map[string]bool{},
 		attempts:     map[string]int{},
-		status:       FolderState{Path: clean, RemotePath: remotePathForBase(base), Status: "scanning"},
+		status:       FolderState{Path: clean, RemotePath: remotePathForBase(base), PairID: pairID, Direction: "upload-only", Status: "scanning"},
 		watcher:      w,
 		cancel:       cancel,
 		activeJobs:   map[string]string{},
@@ -256,6 +445,15 @@ func (m *Manager) Add(path string) (FolderState, error) {
 		ignores:      ignores,
 	}
 	m.roots[clean] = job
+	if m.conflicts == nil {
+		m.conflicts = map[string][]Conflict{}
+	}
+	if m.pins == nil {
+		m.pins = map[string]map[string]string{}
+	}
+	if _, ok := m.pins[pairID]; !ok {
+		m.pins[pairID] = map[string]string{}
+	}
 	m.mu.Unlock()
 	if err := w.Start(ctx); err != nil {
 		m.mu.Lock()
@@ -707,8 +905,16 @@ func (m *Manager) maybePullRemote(job *rootJob) {
 	bi := m.bidirectional
 	policy := m.conflictPolicy
 	client := m.client
+	dir := job.direction
 	m.mu.Unlock()
-	if !ok || !bi || client == nil || client.APIKey == "" || client.BaseURL == "" {
+	if !ok || client == nil || client.APIKey == "" || client.BaseURL == "" {
+		return
+	}
+	if dir != "" {
+		if !m.shouldPull(dir) {
+			return
+		}
+	} else if !bi {
 		return
 	}
 	m.mu.Lock()
@@ -972,6 +1178,10 @@ func (m *Manager) pump(job *rootJob) {
 		return
 	}
 	if job.ctx.Err() != nil {
+		m.mu.Unlock()
+		return
+	}
+	if job.direction != "" && !m.shouldPush(job.direction) {
 		m.mu.Unlock()
 		return
 	}
