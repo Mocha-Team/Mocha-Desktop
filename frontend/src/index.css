@@ -313,6 +313,11 @@ body,
     will-change: transform, opacity;
     animation: welcome-error-in 380ms var(--ease-fluid) both;
   }
+  .startup-enter {
+    opacity: 0;
+    will-change: transform, opacity, filter;
+    animation: startup-in 700ms var(--spring-smooth) both;
+  }
 }
 
 @keyframes welcome-in {
@@ -324,6 +329,12 @@ body,
 @keyframes welcome-error-in {
   from { opacity: 0; transform: translateY(-6px); }
   to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes startup-in {
+  from { opacity: 0; transform: translateY(24px) scale(0.96); filter: blur(12px); }
+  60% { opacity: 1; filter: blur(0); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
 }
 
 @keyframes preview-shell-in {
@@ -405,6 +416,7 @@ body,
 @media (prefers-reduced-motion: reduce) {
   [class*="preview-"],
   [class*="welcome-"],
+  [class*="startup-"],
   .menu-pop,
   .menu-item,
   .folder-enter,

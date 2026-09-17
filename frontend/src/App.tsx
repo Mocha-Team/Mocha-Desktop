@@ -2,7 +2,6 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { EventsOff, EventsOn } from "../wailsjs/runtime/runtime";
 import { api, copyText, folderName, formatBytes, formatDate, formatSpeed, formatTime, isPreviewable, parseLines, type AppSettings, type ArchiveEntry, type FileItem, type Profile, type RemoveSyncPreview, type RemoveSyncResult, type Share, type Status, type StorageInfo, type SyncFolder, type TransferProgress, type TrashItem } from "./lib";
 import { useRevealRoot } from "./hooks";
-import { Loader } from "./Loader";
 import { Titlebar } from "./Titlebar";
 import { Flyout } from "./Flyout";
 import { Preview } from "./Preview";
@@ -12,6 +11,7 @@ import { ArrowIcon, CaretIcon, FolderGlyph } from "./components/icons";
 import { FilesTab } from "./components/FilesTab";
 import { ModalShell } from "./components/ModalShell";
 import { ShareModal } from "./components/ShareModal";
+import { Startup } from "./components/Startup";
 import { Welcome } from "./components/Welcome";
 
 type Tab = "files" | "shares" | "sync" | "activity" | "trash" | "settings";
@@ -204,9 +204,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    void refreshStatus().then(() => setBooted(true));
+    const started = Date.now();
+    let timer = 0;
+    void refreshStatus().finally(() => {
+      timer = window.setTimeout(() => setBooted(true), Math.max(0, 2400 - (Date.now() - started)));
+    });
     api.supportsContextMenu().then(setMenuSupported).catch(() => setMenuSupported(false));
     api.supportsLaunchAtStartup().then(setStartupSupported).catch(() => setStartupSupported(false));
+    return () => window.clearTimeout(timer);
   }, [refreshStatus]);
 
   const debouncedQuery = useDeferredValue(query);
@@ -643,7 +648,7 @@ export default function App() {
       <div className="bg-[var(--background)]">
         <Titlebar />
         <div className="pt-9">
-          <Loader />
+          <Startup />
         </div>
       </div>
     );
