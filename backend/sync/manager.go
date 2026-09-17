@@ -408,14 +408,30 @@ func (m *Manager) SetFolderIgnores(path string, patterns []string) {
 	go m.rescan(clean)
 }
 
+func (m *Manager) resolveRoot(idOrPath string) (string, bool) {
+	if idOrPath == "" {
+		return "", false
+	}
+	for p, job := range m.roots {
+		if job.pairID != "" && job.pairID == idOrPath {
+			return p, true
+		}
+	}
+	clean := filepath.Clean(idOrPath)
+	if _, ok := m.roots[clean]; ok {
+		return clean, true
+	}
+	return "", false
+}
+
 func (m *Manager) SetPaused(path string, paused bool) {
-	clean := filepath.Clean(path)
 	m.mu.Lock()
-	job, ok := m.roots[clean]
+	clean, ok := m.resolveRoot(path)
 	if !ok {
 		m.mu.Unlock()
 		return
 	}
+	job := m.roots[clean]
 	job.paused = paused
 	job.status.Paused = paused
 	if paused {
@@ -731,6 +747,29 @@ func (m *Manager) RemoveWithOptions(path string, deleteRemote bool) (RemoveSyncR
 	return result, nil
 }
 
+func (m *Manager) RemovePair(pairID string, deleteRemote bool) (RemoveSyncResult, error) {
+	var result RemoveSyncResult
+	m.mu.Lock()
+	clean, ok := m.resolveRoot(pairID)
+	m.mu.Unlock()
+	if !ok {
+		return result, fmt.Errorf("pair not found")
+	}
+	return m.RemoveWithOptions(clean, deleteRemote)
+}
+
+func (m *Manager) PreviewRemovePair(pairID string) (RemoveSyncPreview, error) {
+	var preview RemoveSyncPreview
+	preview.Files = []RemovePreviewFile{}
+	m.mu.Lock()
+	clean, ok := m.resolveRoot(pairID)
+	m.mu.Unlock()
+	if !ok {
+		return preview, fmt.Errorf("pair not found")
+	}
+	return m.PreviewRemove(clean)
+}
+
 func (m *Manager) deleteRemoteCopies(client *api.Client, snapshot Snapshot, remoteBase string) RemoveSyncResult {
 	var result RemoveSyncResult
 	targets := collectRemoveTargets(snapshot, remoteBase)
@@ -869,6 +908,44 @@ func (m *Manager) RescanAll() {
 	for _, p := range paths {
 		go m.rescan(p)
 	}
+}
+
+func (m *Manager) Rescan(idOrPath string) error {
+	m.mu.Lock()
+	clean, ok := m.resolveRoot(idOrPath)
+	m.mu.Unlock()
+	if !ok {
+		return fmt.Errorf("pair not found")
+	}
+	go m.rescan(clean)
+	return nil
+}
+
+func (m *Manager) ClearError(idOrPath string) error {
+	m.mu.Lock()
+	clean, ok := m.resolveRoot(idOrPath)
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("pair not found")
+	}
+	job, exists := m.roots[clean]
+	if !exists {
+		m.mu.Unlock()
+		return fmt.Errorf("pair not found")
+	}
+	job.status.Error = ""
+	if job.status.Status == "error" {
+		if job.paused {
+			job.status.Status = "paused"
+		} else if len(job.queue) > 0 {
+			job.status.Status = "syncing"
+		} else {
+			job.status.Status = "idle"
+		}
+	}
+	m.mu.Unlock()
+	m.broadcast()
+	return nil
 }
 
 func (m *Manager) rescan(path string) {

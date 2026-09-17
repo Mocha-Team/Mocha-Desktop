@@ -494,6 +494,24 @@ export default function App() {
     }
   }
 
+  async function rescanPair(pairId: string) {
+    try {
+      await api.rescanPair(pairId);
+      await refreshSync();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Rescan failed");
+    }
+  }
+
+  async function skipPairError(pairId: string) {
+    try {
+      await api.clearSyncError(pairId);
+      await refreshSync();
+    } catch (err) {
+      setNotice(err instanceof Error ? err.message : "Clear failed");
+    }
+  }
+
   async function openIgnoreEditor(folderPath: string) {
     setIgnoreEditor(folderPath);
     try {
@@ -684,7 +702,12 @@ export default function App() {
   async function previewDeleteFiles(folderPath: string) {
     setPreviewLoading(true);
     try {
-      const preview = await api.previewRemoveSyncFolder(folderPath);
+      let preview: RemoveSyncPreview;
+      try {
+        preview = await api.previewRemovePair(folderPath);
+      } catch {
+        preview = await api.previewRemoveSyncFolder(folderPath);
+      }
       setRemovePreview({ path: folderPath, preview });
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Could not preview files");
@@ -700,7 +723,12 @@ export default function App() {
   async function executeDeleteFiles(folderPath: string) {
     setRemoving(true);
     try {
-      const result: RemoveSyncResult = await api.removeSyncFolderAndFiles(folderPath);
+      let result: RemoveSyncResult;
+      try {
+        result = await api.removePair(folderPath, true);
+      } catch {
+        result = await api.removeSyncFolderAndFiles(folderPath);
+      }
       const parts = [`${result.deleted} deleted`];
       if (result.failed > 0) parts.push(`${result.failed} failed`);
       if (result.skipped > 0) parts.push(`${result.skipped} not matched, delete manually`);
@@ -716,7 +744,11 @@ export default function App() {
     if (message === null) {
       setRemoving(true);
       try {
-        await api.removeSyncFolder(folderPath);
+        try {
+          await api.removePair(folderPath, false);
+        } catch {
+          await api.removeSyncFolder(folderPath);
+        }
         setNotice("Stopped sync, uploaded files kept");
       } catch (err) {
         setNotice(err instanceof Error ? err.message : "Could not remove folder");
@@ -972,9 +1004,10 @@ export default function App() {
                         <span className={`shrink-0 font-mono text-[11px] ${f.status === "error" ? "text-red-300" : f.status === "idle" ? "text-mocha-muted" : "text-mocha-gold"}`}>
                           {f.paused || f.status === "paused" ? "Paused" : f.status === "scanning" ? "Scanning" : f.status === "syncing" ? (f.pending > 0 ? `${f.pending} left` : "Syncing") : f.status === "error" ? "Error" : "Up to date"}
                         </span>
-                        <button onClick={() => void togglePause(f.path, !!(f.paused || f.status === "paused"))} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">{f.paused || f.status === "paused" ? "Resume" : "Pause"}</button>
+                        <button onClick={() => void togglePause(pairKeyFor(f), !!(f.paused || f.status === "paused"))} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">{f.paused || f.status === "paused" ? "Resume" : "Pause"}</button>
+                        <button onClick={() => void rescanPair(pairKeyFor(f))} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">Rescan</button>
                         <button onClick={() => void openIgnoreEditor(f.path)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">Ignores</button>
-                        <button onClick={() => removeFolder(f.path)} className="glass-button shrink-0 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200">Remove</button>
+                        <button onClick={() => removeFolder(pairKeyFor(f))} className="glass-button shrink-0 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200">Remove</button>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-[11px] text-mocha-secondary">{f.direction || "upload-only"}</span>
@@ -1013,18 +1046,18 @@ export default function App() {
                           ))}
                         </div>
                       )}
-                      {confirmRemove === f.path && !removePreview && (
+                      {confirmRemove === pairKeyFor(f) && !removePreview && (
                         <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
                           <div className="font-serif text-[15px] italic text-mocha-secondary">Stop syncing this folder?</div>
                           <div className="mt-1 font-mono text-[11px] text-mocha-muted">Uploaded copies stay on the server unless deleted.</div>
                           <div className="mt-2.5 flex flex-wrap gap-2">
-                            <button disabled={removing || previewLoading} onClick={() => keepOnlyFolder(f.path)} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">Keep files</button>
-                            <button disabled={removing || previewLoading} onClick={() => previewDeleteFiles(f.path)} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">{previewLoading ? "Checking..." : "Delete files too"}</button>
+                            <button disabled={removing || previewLoading} onClick={() => keepOnlyFolder(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">Keep files</button>
+                            <button disabled={removing || previewLoading} onClick={() => previewDeleteFiles(pairKeyFor(f))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">{previewLoading ? "Checking..." : "Delete files too"}</button>
                             <button disabled={removing || previewLoading} onClick={() => { setRemovePreview(null); setConfirmRemove(null); }} className="glass-button rounded-full px-3 py-1.5 font-mono text-[11px] text-mocha-muted disabled:opacity-50">Cancel</button>
                           </div>
                         </div>
                       )}
-                      {removePreview && removePreview.path === f.path && (
+                      {removePreview && removePreview.path === pairKeyFor(f) && (
                         <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
                           {removePreview.preview.total === 0 ? (
                             <>
@@ -1052,15 +1085,21 @@ export default function App() {
                           )}
                           <div className="mt-2.5 flex flex-wrap gap-2">
                             {removePreview.preview.matched > 0 && (
-                              <button disabled={removing} onClick={() => executeDeleteFiles(f.path)} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">Delete {removePreview.preview.matched} file{removePreview.preview.matched === 1 ? "" : "s"}</button>
+                              <button disabled={removing} onClick={() => executeDeleteFiles(pairKeyFor(f))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">Delete {removePreview.preview.matched} file{removePreview.preview.matched === 1 ? "" : "s"}</button>
                             )}
-                            <button disabled={removing} onClick={() => keepOnlyFolder(f.path)} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">{removePreview.preview.total === 0 ? "Stop sync anyway" : "Keep files"}</button>
+                            <button disabled={removing} onClick={() => keepOnlyFolder(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">{removePreview.preview.total === 0 ? "Stop sync anyway" : "Keep files"}</button>
                             <button disabled={removing} onClick={() => { setRemovePreview(null); setConfirmRemove(null); }} className="glass-button rounded-full px-3 py-1.5 font-mono text-[11px] text-mocha-muted disabled:opacity-50">Cancel</button>
                           </div>
                         </div>
                       )}
                       {f.status === "error" && f.error && (
-                        <div className="mt-2 truncate font-mono text-[11px] text-red-300">{f.error}</div>
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-red-300">{f.error}</div>
+                          <span className="flex shrink-0 gap-1">
+                            <button onClick={() => void rescanPair(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Retry</button>
+                            <button onClick={() => void skipPairError(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Skip</button>
+                          </span>
+                        </div>
                       )}
                       {f.status === "syncing" && f.current && (
                         <div className="mt-2.5">

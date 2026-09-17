@@ -732,6 +732,38 @@ func (a *App) pruneSyncConfig(clean string) error {
 	return config.Save(a.cfg)
 }
 
+func (a *App) resolvePairPath(idOrPath string) (string, string) {
+	if a.syncMgr != nil {
+		for _, f := range a.syncMgr.List() {
+			if f.PairID != "" && f.PairID == idOrPath {
+				return filepath.Clean(f.Path), f.PairID
+			}
+			if samePath(f.Path, idOrPath) {
+				return filepath.Clean(f.Path), f.PairID
+			}
+		}
+	}
+	return filepath.Clean(idOrPath), ""
+}
+
+func (a *App) prunePairConfig(pairID, clean string) error {
+	if err := a.pruneSyncConfig(clean); err != nil {
+		return err
+	}
+	if pairID == "" {
+		return nil
+	}
+	kept := make([]config.Pair, 0, len(a.cfg.Pairs))
+	for _, p := range a.cfg.Pairs {
+		if p.ID == pairID || samePath(p.LocalPath, clean) {
+			continue
+		}
+		kept = append(kept, p)
+	}
+	a.cfg.Pairs = kept
+	return config.Save(a.cfg)
+}
+
 func (a *App) RemoveSyncFolder(path string) error {
 	if a.syncMgr == nil {
 		return fmt.Errorf("sync not ready")
@@ -750,6 +782,46 @@ func (a *App) PreviewRemoveSyncFolder(path string) (mosync.RemoveSyncPreview, er
 		return mosync.RemoveSyncPreview{}, fmt.Errorf("sync not ready")
 	}
 	return a.syncMgr.PreviewRemove(filepath.Clean(path))
+}
+
+func (a *App) PreviewRemovePair(pairID string) (mosync.RemoveSyncPreview, error) {
+	if a.syncMgr == nil {
+		return mosync.RemoveSyncPreview{}, fmt.Errorf("sync not ready")
+	}
+	return a.syncMgr.PreviewRemovePair(pairID)
+}
+
+func (a *App) RemovePair(pairID string, deleteRemote bool) (mosync.RemoveSyncResult, error) {
+	if a.syncMgr == nil {
+		return mosync.RemoveSyncResult{}, fmt.Errorf("sync not ready")
+	}
+	clean, resolvedID := a.resolvePairPath(pairID)
+	if resolvedID == "" {
+		resolvedID = pairID
+	}
+	result, err := a.syncMgr.RemovePair(pairID, deleteRemote)
+	if err != nil {
+		return result, err
+	}
+	if err := a.prunePairConfig(resolvedID, clean); err != nil {
+		return result, err
+	}
+	go a.sendHeartbeat()
+	return result, nil
+}
+
+func (a *App) RescanPair(idOrPath string) error {
+	if a.syncMgr == nil {
+		return fmt.Errorf("sync not ready")
+	}
+	return a.syncMgr.Rescan(idOrPath)
+}
+
+func (a *App) ClearSyncError(idOrPath string) error {
+	if a.syncMgr == nil {
+		return fmt.Errorf("sync not ready")
+	}
+	return a.syncMgr.ClearError(idOrPath)
 }
 
 func (a *App) RemoveSyncFolderAndFiles(path string) (mosync.RemoveSyncResult, error) {
@@ -874,8 +946,8 @@ func (a *App) SetSyncPaused(path string, paused bool) error {
 	if a.syncMgr == nil {
 		return fmt.Errorf("sync not ready")
 	}
-	clean := filepath.Clean(path)
-	a.syncMgr.SetPaused(clean, paused)
+	clean, _ := a.resolvePairPath(path)
+	a.syncMgr.SetPaused(path, paused)
 	if a.cfg.FolderSettings == nil {
 		a.cfg.FolderSettings = map[string]config.FolderSettings{}
 	}

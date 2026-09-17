@@ -337,7 +337,11 @@ export const api = {
   removeSyncFolder: (path: string) => invoke<void>("RemoveSyncFolder", path),
   previewRemoveSyncFolder: (path: string) => invoke<RemoveSyncPreview>("PreviewRemoveSyncFolder", path),
   removeSyncFolderAndFiles: (path: string) => invoke<RemoveSyncResult>("RemoveSyncFolderAndFiles", path),
+  previewRemovePair: (pairId: string) => invoke<RemoveSyncPreview>("PreviewRemovePair", pairId),
+  removePair: (pairId: string, deleteRemote: boolean) => invoke<RemoveSyncResult>("RemovePair", pairId, deleteRemote),
   rescanSync: () => invoke<void>("RescanSync"),
+  rescanPair: (pairId: string) => invoke<void>("RescanPair", pairId),
+  clearSyncError: (pairId: string) => invoke<void>("ClearSyncError", pairId),
   showMain: () => invoke<void>("ShowMain"),
   closeWindow: () => invoke<void>("CloseWindow"),
 };
