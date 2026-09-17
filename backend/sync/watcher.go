@@ -78,9 +78,11 @@ func FilterSnapshot(s Snapshot, patterns []string) {
 }
 
 type FileState struct {
-	Size     int64  `json:"size"`
-	ModTime  int64  `json:"modTime"`
-	RemoteID string `json:"remoteId,omitempty"`
+	Size          int64  `json:"size"`
+	ModTime       int64  `json:"modTime"`
+	Hash          string `json:"hash,omitempty"`
+	RemoteID      string `json:"remoteId,omitempty"`
+	RemoteModTime int64  `json:"remoteModTime,omitempty"`
 }
 
 type Snapshot map[string]FileState
@@ -204,6 +206,31 @@ func Diff(old, next Snapshot) (added, modified []string) {
 		}
 	}
 	return added, modified
+}
+
+func DiffWithHash(old, next Snapshot) (added, modified []string) {
+	added = []string{}
+	modified = []string{}
+	for k, v := range next {
+		o, ok := old[k]
+		if !ok {
+			added = append(added, k)
+			continue
+		}
+		if o.Size != v.Size || o.Hash != v.Hash {
+			if o.Hash == "" && v.Hash == "" && o.ModTime == v.ModTime && o.Size == v.Size {
+				continue
+			}
+			modified = append(modified, k)
+		}
+	}
+	return added, modified
+}
+
+func BothChanged(local, remote, base FileState) bool {
+	localChanged := local.Size != base.Size || local.Hash != base.Hash
+	remoteChanged := remote.Size != base.Size || remote.Hash != base.Hash
+	return localChanged && remoteChanged
 }
 
 func NewWithIgnores(root string, patterns []string) (*Watcher, error) {
