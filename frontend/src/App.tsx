@@ -12,6 +12,7 @@ import { ArrowIcon, CaretIcon, FolderGlyph } from "./components/icons";
 import { FilesTab } from "./components/FilesTab";
 import { ModalShell } from "./components/ModalShell";
 import { ShareModal } from "./components/ShareModal";
+import { Welcome } from "./components/Welcome";
 
 type Tab = "files" | "shares" | "sync" | "activity" | "trash" | "settings";
 
@@ -36,7 +37,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
-  const [appUrl, setAppUrl] = useState("https://mocha.my");
+  const appUrl = "https://mocha.my";
   const [apiKey, setApiKey] = useState("");
   const [booted, setBooted] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
@@ -650,42 +651,17 @@ export default function App() {
 
   if (!status.configured) {
     return (
-      <div className="h-[100dvh] overflow-hidden bg-[var(--background)] px-4 py-8">
+      <div className="flex h-[100dvh] flex-col overflow-hidden bg-[var(--background)] px-4 pb-4 text-mocha-primary">
         <Titlebar />
-        <div className="quiet-scroll relative mx-auto h-full w-full max-w-md pb-16 pt-24">
-          <div className="reveal is-visible">
-            <span className="font-mono text-[11px] uppercase tracking-[0.2em] text-mocha-muted">Mocha Desktop</span>
-            <h1 className="mt-4 font-ui text-3xl font-semibold leading-[1.1] tracking-tight text-mocha-primary">
-              Your files,
-              <br />
-              <span className="font-serif italic text-mocha-goldbright">machined</span> for desktop.
-            </h1>
-            <p className="mt-3 max-w-md text-[13px] leading-relaxed text-mocha-secondary">
-              Connect with a Mocha API key. Keys stay in your OS keychain, uploads use multipart presigned URLs, downloads resume with Range.
-            </p>
-          </div>
-          <div className="bezel-shell reveal is-visible mt-6">
-            <form onSubmit={connect} className="bezel-core space-y-3 p-4">
-              <label className="block">
-                <span className="mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">App URL</span>
-                <input value={appUrl} onChange={(e) => setAppUrl(e.target.value)} placeholder="https://mocha.my" className="field w-full rounded-2xl px-4 py-3 text-sm transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]" />
-              </label>
-              <div className="rounded-2xl border border-white/5 bg-white/[0.03] px-4 py-3 font-mono text-[11px] text-mocha-muted">API endpoint fixed to https://api.mocha.my</div>
-              <label className="block">
-                <span className="mb-2 block font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">API key</span>
-                <input value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="mocha_..." type="password" className="field w-full rounded-2xl px-4 py-3 font-mono text-sm transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]" />
-              </label>
-              <button type="submit" disabled={busy} className="glass-button btn-gold group flex w-full items-center justify-between rounded-full py-2 pl-6 pr-2 text-sm font-semibold active:scale-[0.98]">
-                <span>{busy ? "Connecting" : "Connect Mocha"}</span>
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110">
-                  <ArrowIcon />
-                </span>
-              </button>
-              <p className="font-mono text-[11px] leading-relaxed text-mocha-muted">Mint a key in web dashboard under API Keys. API access is on by default unless an admin revoked it.</p>
-            </form>
-          </div>
-          {notice && <div className="mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-mocha-secondary">{notice}</div>}
-        </div>
+        <main className="relative mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden pt-9">
+          <Welcome
+            apiKey={apiKey}
+            onApiKey={setApiKey}
+            busy={busy}
+            notice={notice}
+            onConnect={connect}
+          />
+        </main>
       </div>
     );
   }

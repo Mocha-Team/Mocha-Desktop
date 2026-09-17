@@ -299,6 +299,31 @@ body,
     transform: scale(0.985);
     transition: opacity 450ms var(--ease-fluid), filter 450ms var(--ease-fluid), transform 450ms var(--ease-fluid);
   }
+  .welcome-step {
+    will-change: transform, opacity, filter;
+    animation: welcome-in 520ms var(--spring-smooth) both;
+  }
+  .welcome-from-right {
+    --wx: 36px;
+  }
+  .welcome-from-left {
+    --wx: -36px;
+  }
+  .welcome-error {
+    will-change: transform, opacity;
+    animation: welcome-error-in 380ms var(--ease-fluid) both;
+  }
+}
+
+@keyframes welcome-in {
+  from { opacity: 0; transform: translateX(var(--wx, 36px)) scale(0.98); filter: blur(10px); }
+  60% { opacity: 1; filter: blur(0); }
+  to { opacity: 1; transform: translateX(0) scale(1); filter: blur(0); }
+}
+
+@keyframes welcome-error-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes preview-shell-in {
@@ -379,6 +404,7 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   [class*="preview-"],
+  [class*="welcome-"],
   .menu-pop,
   .menu-item,
   .folder-enter,
