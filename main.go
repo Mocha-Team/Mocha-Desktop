@@ -20,12 +20,13 @@ func main() {
 	app := NewApp()
 
 	err := wails.Run(&options.App{
-		Title:     "Mocha",
-		Width:     1120,
-		Height:    720,
-		MinWidth:  960,
-		MinHeight: 640,
-		Frameless: runtime.GOOS != "darwin",
+		Title:         "Mocha",
+		Width:         1120,
+		Height:        720,
+		MinWidth:      960,
+		MinHeight:     640,
+		DisableResize: true,
+		Frameless:     runtime.GOOS != "darwin",
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
