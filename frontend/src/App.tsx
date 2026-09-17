@@ -8,7 +8,7 @@ import { Flyout } from "./Flyout";
 import { Preview } from "./Preview";
 import { SettingRow } from "./Toggle";
 import { TransferRow } from "./components/TransferPanel";
-import { ArrowIcon, FolderGlyph } from "./components/icons";
+import { ArrowIcon, CaretIcon, FolderGlyph } from "./components/icons";
 import { FilesTab } from "./components/FilesTab";
 import { ModalShell } from "./components/ModalShell";
 import { ShareModal } from "./components/ShareModal";
@@ -693,14 +693,14 @@ export default function App() {
       <Titlebar />
 
       <header className="fixed left-1/2 top-[52px] z-30 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2">
-        <div className="flex items-center gap-1 rounded-full border border-white/10 bg-black/60 py-1 pl-4 pr-1 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl">
+        <div className={`flex items-center gap-1 rounded-full border border-white/10 bg-black/60 py-1 pl-4 pr-1 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl`}>
           <span className="mr-2 font-serif text-base italic text-mocha-goldbright">Mocha</span>
           {(["files", "shares", "sync", "activity", "trash"] as Tab[]).map((t) => (
             <button key={t} onClick={() => { setTab(t); closeMenu(); }} className={`glass-button rounded-full px-3 py-1.5 text-[11px] font-medium capitalize tracking-wide transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] ${tab === t ? "bg-white/10 text-mocha-goldbright" : "text-mocha-secondary hover:bg-white/5 hover:text-mocha-primary"}`}>
               {t}
             </button>
           ))}
-          <button onClick={toggleMenu} aria-label="Menu" aria-expanded={menuOpen} className="glass-button relative ml-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/5 text-mocha-primary">
+          <button onClick={toggleMenu} aria-label="Menu" aria-expanded={menuOpen} className={`glass-button relative ml-1.5 flex h-7 w-7 items-center justify-center rounded-full bg-white/5 text-mocha-primary`}>
             <span className={`absolute h-px w-4 bg-current transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] ${menuOpen ? "rotate-45" : "-translate-y-[3px]"}`} />
             <span className={`absolute h-px w-4 bg-current transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] ${menuOpen ? "-rotate-45" : "translate-y-[3px]"}`} />
           </button>
@@ -720,24 +720,31 @@ export default function App() {
         <div className="reveal-fade flex shrink-0 flex-wrap items-center justify-between gap-4">
           <div>
             {tab === "files" && path !== "/" && (
-              <div className="flex flex-wrap items-center gap-2 font-mono text-[11px] text-mocha-muted">
-                {crumbs.map((c) => (
-                  <button key={c.value} onClick={() => setPath(c.value)} className="rounded-full border border-white/5 bg-white/5 px-3 py-1 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-mocha-gold/30 hover:text-mocha-goldbright">
-                    {c.label}
-                  </button>
+              <div className="flex flex-wrap items-center gap-1 font-mono text-[11px] text-mocha-muted">
+                {crumbs.map((c, i) => (
+                  <span key={c.value} className="flex items-center gap-1">
+                    {i > 0 && (
+                      <span className="text-mocha-dim" aria-hidden="true">
+                        <CaretIcon />
+                      </span>
+                    )}
+                    <button onClick={() => setPath(c.value)} className="rounded-full border border-white/5 bg-white/5 px-3 py-1 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-mocha-gold/30 hover:text-mocha-goldbright">
+                      {c.label}
+                    </button>
+                  </span>
                 ))}
               </div>
             )}
           </div>
           <div className="flex items-center gap-2">
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files" className="field w-40 rounded-full px-3.5 py-2 text-[13px] transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files" className={`field w-40 rounded-full px-3.5 py-2 text-[13px] transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]`} />
             {tab === "files" && (
               <>
                 <button
                   onClick={() => void changeFilesView(filesView === "grid" ? "list" : "grid")}
                   title={filesView === "grid" ? "List view" : "Grid view"}
                   aria-label="Toggle view"
-                  className="glass-button btn-ghost flex h-8 w-8 items-center justify-center rounded-full"
+                  className={`glass-button btn-ghost flex h-8 w-8 items-center justify-center rounded-full`}
                 >
                   {filesView === "grid" ? (
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
@@ -752,13 +759,13 @@ export default function App() {
                     </svg>
                   )}
                 </button>
-                <button onClick={() => openModalFor({ kind: "mkdir" })} className="glass-button btn-ghost rounded-full px-3.5 py-2 text-[13px]">New Folder</button>
+                <button onClick={() => openModalFor({ kind: "mkdir" })} className={`glass-button btn-ghost rounded-full px-3.5 py-2 text-[13px]`}>New Folder</button>
                 {selectedIds.size > 0 && (
-                  <button onClick={() => void bulkDownload()} className="glass-button btn-ghost rounded-full px-3.5 py-2 text-[13px]">Zip ({selectedIds.size})</button>
+                  <button onClick={() => void bulkDownload()} className={`glass-button btn-ghost rounded-full px-3.5 py-2 text-[13px]`}>Zip ({selectedIds.size})</button>
                 )}
               </>
             )}
-            <button onClick={upload} disabled={uploading} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98] disabled:opacity-60">
+            <button onClick={upload} disabled={uploading} className={`glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98] disabled:opacity-60`}>
               {uploading ? "Uploading" : "Upload"}
               <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110">
                 <ArrowIcon />

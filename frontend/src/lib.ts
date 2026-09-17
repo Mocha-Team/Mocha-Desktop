@@ -257,6 +257,11 @@ export function folderName(p: string): string {
   return parts.length > 0 ? parts[parts.length - 1] : p;
 }
 
+// ponytail: UA sniff, Wails exposes no sync GOOS in frontend
+export function isMac(): boolean {
+  return typeof navigator !== "undefined" && /mac/i.test(navigator.platform || navigator.userAgent);
+}
+
 export const api = {
   status: () => invoke<Status>("GetStatus"),
   saveConnection: (appUrl: string, key: string) => invoke<void>("SaveConnection", appUrl, key),

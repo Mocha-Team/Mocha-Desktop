@@ -1,5 +1,5 @@
 import { WindowMinimise, WindowToggleMaximise } from "../wailsjs/runtime/runtime";
-import { api } from "./lib";
+import { api, isMac } from "./lib";
 import { CoffeeMark } from "./Loader";
 
 function MinIcon() {
@@ -19,6 +19,8 @@ function CloseIcon() {
 }
 
 export function Titlebar() {
+  // ponytail: native AppKit bar owns drag + zoom on mac, no web chrome needed
+  if (isMac()) return null;
   return (
     <div className="titlebar-drag fixed inset-x-0 top-0 z-40 flex h-9 select-none items-center justify-between border-b border-[var(--border-subtle)] bg-[var(--surface)] px-2.5">
       <div className="flex items-center gap-1.5 text-[var(--accent-gold)]">

@@ -1,5 +1,5 @@
 import { CoffeeMark } from "./Loader";
-import { folderName, formatBytes, formatSpeed, type SyncFolder, type TransferProgress } from "./lib";
+import { folderName, formatBytes, formatSpeed, isMac, type SyncFolder, type TransferProgress } from "./lib";
 
 function folderLabel(f: SyncFolder) {
   if (f.paused || f.status === "paused") return "Paused";
@@ -31,7 +31,7 @@ export function Flyout({ folders, transfers, onOpen, onClose }: {
             {status}
           </span>
         </div>
-        <button onClick={onClose} aria-label="Close" className="titlebar-no-drag win-btn win-btn-close flex h-7 w-9 items-center justify-center rounded-md text-[var(--text-muted)]">
+        <button onClick={onClose} aria-label="Close" style={isMac() ? { display: "none" } : undefined} className="titlebar-no-drag win-btn win-btn-close flex h-7 w-9 items-center justify-center rounded-md text-[var(--text-muted)]">
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>

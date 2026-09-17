@@ -9,6 +9,14 @@ export function ArrowIcon() {
   );
 }
 
+export function CaretIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 6l6 6-6 6" />
+    </svg>
+  );
+}
+
 export function FileGlyph({ mime }: { mime: string }) {
   const parts = mime.split("/");
   return (

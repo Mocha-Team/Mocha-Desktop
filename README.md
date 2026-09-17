@@ -75,9 +75,9 @@ The API base URL is fixed to `https://api.mocha.my`. Only the app URL is configu
 
 ## Platform notes
 
-Closing the window hides it to the tray on all platforms. Use Quit in the tray menu to exit fully.
+Closing the window hides it to the tray on Windows/Linux. Use Quit in the tray menu to exit fully (on macOS use the Dock menu or Cmd+Q, as there is no tray icon).
 
-macOS: unsigned builds are blocked by Gatekeeper on first open. Right-click the app and pick Open, or sign and notarize it. There is a base entitlements file at `build/darwin/entitlements.plist` if you sign it yourself.
+macOS: install from the `.dmg` (drag the app to `/Applications`). Ad-hoc signed builds are blocked by Gatekeeper on first open: right-click the app and pick Open, or run `xattr -cr "/Applications/Mocha.app"`. For public distribution, sign with a Developer ID and notarize. There is a base entitlements file at `build/darwin/entitlements.plist`, and `build/darwin/package-dmg.sh` rebuilds the `.dmg` from `build/bin/*.app`. The tray icon is disabled on macOS (it conflicts with the main UI thread and crashes); use the window and Cmd+Q to quit.
 
 Linux: the tray icon needs StatusNotifier over DBus, so GNOME needs an AppIndicator extension and KDE works as is. A `mocha-desktop.desktop` file is in `build/linux/`. Watching large trees can hit the inotify limit, raise `fs.inotify.max_user_watches` if sync reports watcher errors. Video playback depends on OS codecs, so some HEVC/MKV files will not play in WebKitGTK.
 

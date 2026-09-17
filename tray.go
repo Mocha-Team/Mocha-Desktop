@@ -36,6 +36,10 @@ func trayIcon() []byte {
 }
 
 func (a *App) startTray() {
+	// ponytail: fyne systray + Wails both need macOS main thread -> SIGTRAP in nativeLoop; skip tray on darwin, keep Windows/Linux.
+	if goruntime.GOOS == "darwin" {
+		return
+	}
 	systray.Run(a.onTrayReady, a.onTrayExit)
 }
 
@@ -72,6 +76,9 @@ func (a *App) onTrayExit() {
 }
 
 func (a *App) shutdown(ctx context.Context) {
+	if goruntime.GOOS == "darwin" {
+		return
+	}
 	systray.Quit()
 }
 

@@ -8,7 +8,7 @@
   "frontend:dev:serverUrl": "auto",
   "info": {
     "companyName": "Mocha",
-    "productName": "Mocha Desktop",
+    "productName": "Mocha",
     "productVersion": "1.0.0",
     "copyright": "Mocha",
     "comments": "Mocha file hosting for desktop."
