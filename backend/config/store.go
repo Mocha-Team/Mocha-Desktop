@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,11 +23,22 @@ type FolderSettings struct {
 	Paused  bool     `json:"paused,omitempty"`
 }
 
+type Direction string
+
+type Pair struct {
+	ID         string    `json:"id"`
+	LocalPath  string    `json:"localPath"`
+	RemotePath string    `json:"remotePath"`
+	Direction  Direction `json:"direction"`
+	PinDefault string    `json:"pinDefault"`
+}
+
 type Store struct {
 	AppURL         string                    `json:"appUrl"`
 	ApiURL         string                    `json:"apiUrl"`
 	SyncFolder     string                    `json:"syncFolder,omitempty"`
 	SyncFolders    []string                  `json:"syncFolders"`
+	Pairs          []Pair                    `json:"pairs,omitempty"`
 	Settings       Settings                  `json:"settings,omitempty"`
 	FolderSettings map[string]FolderSettings `json:"folderSettings,omitempty"`
 }
@@ -77,6 +89,10 @@ func Load() (Store, error) {
 	if s.FolderSettings == nil {
 		s.FolderSettings = map[string]FolderSettings{}
 	}
+	if s.Pairs == nil {
+		s.Pairs = []Pair{}
+	}
+	s = MigratePairs(s)
 	if s.Settings.PauseMode != "cancel" {
 		s.Settings.PauseMode = "drain"
 	}
@@ -96,6 +112,69 @@ func Save(s Store) error {
 		return err
 	}
 	return os.WriteFile(p, raw, 0o600)
+}
+
+func MigratePairs(s Store) Store {
+	if len(s.Pairs) > 0 {
+		return s
+	}
+	for _, p := range s.SyncFolders {
+		clean := filepath.Clean(p)
+		s.Pairs = append(s.Pairs, Pair{
+			ID:         newPairID(clean),
+			LocalPath:  clean,
+			RemotePath: "",
+			Direction:  Direction("upload-only"),
+			PinDefault: "keep",
+		})
+	}
+	return s
+}
+
+func ValidatePair(p Pair) error {
+	if strings.TrimSpace(p.LocalPath) == "" {
+		return fmt.Errorf("local path required")
+	}
+	if p.Direction != Direction("upload-only") && p.Direction != Direction("download-only") && p.Direction != Direction("mirror") {
+		return fmt.Errorf("direction required")
+	}
+	if strings.TrimSpace(p.RemotePath) == "" {
+		return fmt.Errorf("remote path required")
+	}
+	return nil
+}
+
+func ValidatePairs(pairs []Pair) error {
+	seen := map[string]bool{}
+	for _, p := range pairs {
+		if err := ValidatePair(p); err != nil {
+			return err
+		}
+		clean := filepath.Clean(p.LocalPath)
+		for q := range seen {
+			if clean == q {
+				return fmt.Errorf("duplicate folder")
+			}
+			rel, err := filepath.Rel(q, clean)
+			if err == nil && rel != ".." && rel != "." {
+				return fmt.Errorf("folder overlaps")
+			}
+			rel2, err2 := filepath.Rel(clean, q)
+			if err2 == nil && rel2 != ".." && rel2 != "." {
+				return fmt.Errorf("folder overlaps")
+			}
+		}
+		seen[clean] = true
+	}
+	return nil
+}
+
+func newPairID(clean string) string {
+	base := strings.ToLower(strings.TrimSpace(clean))
+	if base == "" {
+		base = "pair"
+	}
+	return base
 }
 
 func ApiBase(s Store) string {
