@@ -108,6 +108,9 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 		direction = "upload-only"
 	}
 	remoteBase := strings.Trim(strings.TrimSpace(p.RemotePath), "/")
+	m.mu.Lock()
+	_, exists := m.roots[clean]
+	m.mu.Unlock()
 	st, err := m.Add(clean)
 	if err != nil {
 		return st, err
@@ -115,6 +118,11 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 	m.mu.Lock()
 	job, ok := m.roots[clean]
 	if !ok {
+		m.mu.Unlock()
+		return st, nil
+	}
+	if exists {
+		st = job.status
 		m.mu.Unlock()
 		return st, nil
 	}
@@ -196,7 +204,7 @@ func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked 
 	}
 	tree, err := m.listRemoteTree(client, base)
 	if err != nil {
-		return st, nil
+		return st, err
 	}
 	m.mu.Lock()
 	if m.pins == nil {
@@ -220,15 +228,84 @@ func (m *Manager) SetDirection(pairID, direction string) error {
 		return fmt.Errorf("direction required")
 	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	for _, job := range m.roots {
 		if job.pairID == pairID {
 			job.direction = direction
 			job.status.Direction = direction
+			m.mu.Unlock()
+			m.broadcast()
 			return nil
 		}
 	}
+	m.mu.Unlock()
 	return fmt.Errorf("pair not found")
+}
+
+func (m *Manager) ListConflicts(pairID string) []Conflict {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Conflict{}, m.conflicts[pairID]...)
+}
+
+func (m *Manager) ResolveConflict(pairID, rel, choice string) error {
+	if choice != "keep-local" && choice != "keep-remote" && choice != "keep-both" {
+		return fmt.Errorf("choice required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	list := m.conflicts[pairID]
+	kept := make([]Conflict, 0, len(list))
+	found := false
+	for _, c := range list {
+		if c.Rel == rel {
+			found = true
+			continue
+		}
+		kept = append(kept, c)
+	}
+	if !found {
+		return fmt.Errorf("conflict not found")
+	}
+	m.conflicts[pairID] = kept
+	return nil
+}
+
+func (m *Manager) shouldDownload(pairID, rel string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pins == nil {
+		return true
+	}
+	if m.pins[pairID] == nil {
+		return true
+	}
+	return m.pins[pairID][rel] != "cloud"
+}
+
+func (m *Manager) SetFilePin(pairID, rel, pin string) error {
+	if pin != "keep" && pin != "cloud" {
+		return fmt.Errorf("pin required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.pins == nil {
+		m.pins = map[string]map[string]string{}
+	}
+	if m.pins[pairID] == nil {
+		m.pins[pairID] = map[string]string{}
+	}
+	m.pins[pairID][rel] = pin
+	return nil
+}
+
+func (m *Manager) GetFilePins(pairID string) map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := map[string]string{}
+	for k, v := range m.pins[pairID] {
+		out[k] = v
+	}
+	return out
 }
 
 func (m *Manager) ListRemoteForAttach(remotePath string) ([]RemotePickFile, error) {
@@ -248,9 +325,6 @@ func (m *Manager) ListRemoteForAttach(remotePath string) ([]RemotePickFile, erro
 	}
 	out := make([]RemotePickFile, 0, len(tree))
 	for rel, rf := range tree {
-		if rf.size == 0 {
-			continue
-		}
 		out = append(out, RemotePickFile{Rel: filepath.ToSlash(rel), Size: rf.size})
 	}
 	slices.SortFunc(out, func(a, b RemotePickFile) int { return strings.Compare(a.Rel, b.Rel) })
@@ -1002,9 +1076,13 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 	m.mu.Lock()
 	state := maps.Clone(job.state)
 	ignores := append([]string{}, job.ignores...)
+	pairID := job.pairID
 	m.mu.Unlock()
 	for rel, rf := range remote {
 		if rf.size == 0 || MatchIgnore(rel, ignores) {
+			continue
+		}
+		if !m.shouldDownload(pairID, rel) {
 			continue
 		}
 		if st, ok := state[rel]; ok && st.Size == rf.size {

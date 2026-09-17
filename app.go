@@ -647,6 +647,34 @@ func (a *App) SetPairDirection(pairID, direction string) error {
 	return nil
 }
 
+func (a *App) ListConflicts(pairID string) []mosync.Conflict {
+	if a.syncMgr == nil {
+		return []mosync.Conflict{}
+	}
+	return a.syncMgr.ListConflicts(pairID)
+}
+
+func (a *App) ResolveConflict(pairID, rel, choice string) error {
+	if a.syncMgr == nil {
+		return fmt.Errorf("sync not ready")
+	}
+	return a.syncMgr.ResolveConflict(pairID, rel, choice)
+}
+
+func (a *App) SetFilePin(pairID, rel, pin string) error {
+	if a.syncMgr == nil {
+		return fmt.Errorf("sync not ready")
+	}
+	return a.syncMgr.SetFilePin(pairID, rel, pin)
+}
+
+func (a *App) GetFilePins(pairID string) map[string]string {
+	if a.syncMgr == nil {
+		return map[string]string{}
+	}
+	return a.syncMgr.GetFilePins(pairID)
+}
+
 func (a *App) rememberPair(p config.Pair, st mosync.FolderState) {
 	clean := st.Path
 	if clean == "" {
