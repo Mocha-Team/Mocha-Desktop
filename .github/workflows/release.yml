@@ -89,6 +89,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
       - name: download staged assets
         uses: actions/download-artifact@v5
         with:
@@ -122,4 +124,12 @@ jobs:
               json.dump(manifest, f, indent=2)
               f.write("\n")
           EOF
-          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes "" dist/* --latest
+          prev=$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)
+          if [ -z "$prev" ]; then range="HEAD"; else range="$prev..${GITHUB_REF_NAME}"; fi
+          {
+            echo "Changes since ${prev:-the beginning}"
+            echo ""
+            git log "$range" --pretty=format:'- %s (%h)' --no-merges
+            echo ""
+          } > NOTES.md
+          gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file NOTES.md dist/* --latest
