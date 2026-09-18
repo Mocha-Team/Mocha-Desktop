@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -17,6 +19,7 @@ import (
 	"mocha-desktop/backend/startup"
 	mosync "mocha-desktop/backend/sync"
 	"mocha-desktop/backend/transfers"
+	"mocha-desktop/backend/updater"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
@@ -139,9 +142,16 @@ func (a *App) startup(ctx context.Context) {
 	}
 	go a.startTray()
 	go a.heartbeatLoop()
+	go a.autoUpdateCheck()
 }
 
-const desktopAppVersion = "1.0.0"
+func appVersion() string {
+	v := strings.TrimSpace(version)
+	if v == "" {
+		return "dev"
+	}
+	return v
+}
 
 func (a *App) heartbeatLoop() {
 	time.Sleep(10 * time.Second)
@@ -151,6 +161,18 @@ func (a *App) heartbeatLoop() {
 	for range ticker.C {
 		a.sendHeartbeat()
 	}
+}
+
+func (a *App) autoUpdateCheck() {
+	time.Sleep(15 * time.Second)
+	if a.ctx == nil {
+		return
+	}
+	res, err := a.CheckForUpdates()
+	if err != nil || !res.Available {
+		return
+	}
+	a.emit("update:available", res)
 }
 
 func (a *App) sendHeartbeat() {
@@ -187,7 +209,7 @@ func (a *App) sendHeartbeat() {
 		})
 	}
 	deviceID := a.cfg.EnsureDeviceID()
-	revoked, err := a.client.HeartbeatComputer(deviceID, host, goruntime.GOOS, desktopAppVersion, folders)
+	revoked, err := a.client.HeartbeatComputer(deviceID, host, goruntime.GOOS, appVersion(), folders)
 	if err != nil || !revoked {
 		return
 	}
@@ -201,6 +223,8 @@ func (a *App) sendHeartbeat() {
 }
 
 const DefaultAPIURL = "https://api.mocha.my"
+
+const updateManifestURL = "https://github.com/Mocha-Team/Mocha-Desktop/releases/latest/download/updates.json"
 
 func (a *App) rebuildClient() {
 	base := config.ApiBase(a.cfg)
@@ -233,6 +257,106 @@ func (a *App) GetStatus() Status {
 		AppURL:      a.cfg.AppURL,
 		ApiURL:      a.cfg.ApiURL,
 		SyncFolders: folders,
+	}
+}
+
+func (a *App) GetAppVersion() string {
+	return appVersion()
+}
+
+func (a *App) CheckForUpdates() (updater.CheckResult, error) {
+	client := &http.Client{Timeout: 60 * time.Second}
+	return updater.Check(client, updateManifestURL, appVersion(), goruntime.GOOS, goruntime.GOARCH)
+}
+
+func (a *App) DownloadAndApplyUpdate(assetURL, sha256hex, name string) (string, error) {
+	assetURL = strings.TrimSpace(assetURL)
+	sha256hex = strings.TrimSpace(sha256hex)
+	name = strings.TrimSpace(name)
+	if assetURL == "" || sha256hex == "" || name == "" {
+		return "", fmt.Errorf("update asset required")
+	}
+	checked, err := a.CheckForUpdates()
+	if err != nil {
+		return "", err
+	}
+	if !checked.Available {
+		return "", fmt.Errorf("no update available")
+	}
+	if strings.TrimSpace(checked.Asset.URL) != assetURL || strings.TrimSpace(checked.Asset.Name) != name || !strings.EqualFold(strings.TrimSpace(checked.Asset.SHA256), sha256hex) {
+		return "", fmt.Errorf("update asset mismatch")
+	}
+	client := &http.Client{Timeout: 30 * time.Minute}
+	pattern := "mocha-update-*"
+	if goruntime.GOOS == "windows" {
+		pattern = "mocha-update-*.exe"
+	}
+	tmp, err := os.CreateTemp("", pattern)
+	if err != nil {
+		return "", err
+	}
+	tmpPath := tmp.Name()
+	_ = tmp.Close()
+	emit := a.emit
+	if err := updater.Download(client, assetURL, sha256hex, tmpPath, func(loaded, total int64) {
+		emit("update:progress", map[string]any{"loaded": loaded, "total": total})
+	}); err != nil {
+		emit("update:error", map[string]any{"error": err.Error()})
+		return "", err
+	}
+	switch goruntime.GOOS {
+	case "windows":
+		cmd := exec.Command(tmpPath)
+		cmd.Dir = filepath.Dir(tmpPath)
+		if err := cmd.Start(); err != nil {
+			wrapped := fmt.Errorf("installer saved to %s: %w", tmpPath, err)
+			emit("update:error", map[string]any{"error": wrapped.Error()})
+			return "", wrapped
+		}
+		go func() {
+			time.Sleep(500 * time.Millisecond)
+			runtime.Quit(a.ctx)
+		}()
+		return tmpPath, nil
+	case "darwin":
+		home, err := os.UserHomeDir()
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return "", err
+		}
+		dest := filepath.Join(home, "Downloads", filepath.Base(name))
+		if _, err := os.Stat(dest); err == nil {
+			ext := filepath.Ext(dest)
+			base := strings.TrimSuffix(filepath.Base(dest), ext)
+			dest = filepath.Join(home, "Downloads", base+"-"+time.Now().Format("20060102-150405")+ext)
+		}
+		if err := os.Rename(tmpPath, dest); err != nil {
+			_ = os.Remove(tmpPath)
+			return "", err
+		}
+		if err := updater.OpenPath(dest); err != nil {
+			return "", err
+		}
+		emit("update:applied", map[string]any{"path": dest})
+		return dest, nil
+	default:
+		exe, err := os.Executable()
+		if err != nil {
+			_ = os.Remove(tmpPath)
+			return "", err
+		}
+		if !updater.WritableDir(exe) {
+			_ = os.Remove(tmpPath)
+			return "", fmt.Errorf("install location not writable, download manually")
+		}
+		if err := updater.ReplaceExecutable(exe, tmpPath); err != nil {
+			_ = os.Remove(tmpPath)
+			emit("update:error", map[string]any{"error": err.Error()})
+			return "", err
+		}
+		_ = os.Remove(tmpPath)
+		emit("update:applied", map[string]any{"path": exe})
+		return exe, nil
 	}
 }
 
