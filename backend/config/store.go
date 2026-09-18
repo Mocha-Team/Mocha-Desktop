@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type Settings struct {
@@ -39,6 +40,7 @@ type Pair struct {
 type Store struct {
 	AppURL         string                    `json:"appUrl"`
 	ApiURL         string                    `json:"apiUrl"`
+	DeviceID       string                    `json:"deviceId,omitempty"`
 	SyncFolder     string                    `json:"syncFolder,omitempty"`
 	SyncFolders    []string                  `json:"syncFolders"`
 	Pairs          []Pair                    `json:"pairs,omitempty"`
@@ -75,6 +77,7 @@ func Load() (Store, error) {
 	raw, err := os.ReadFile(p)
 	if err != nil {
 		if os.IsNotExist(err) {
+			s.EnsureDeviceID()
 			return s, nil
 		}
 		return s, err
@@ -102,6 +105,7 @@ func Load() (Store, error) {
 	if s.Settings.ConflictPolicy == "" {
 		s.Settings.ConflictPolicy = "skip"
 	}
+	s.EnsureDeviceID()
 	return s, nil
 }
 
@@ -192,6 +196,22 @@ func newPairID(clean string) string {
 
 func NewPairID() string {
 	return newPairID("")
+}
+
+func NewDeviceID() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return "dev-" + hex.EncodeToString(b[:])
+	}
+	h := sha1.Sum([]byte(time.Now().String()))
+	return "dev-" + hex.EncodeToString(h[:])
+}
+
+func (s *Store) EnsureDeviceID() string {
+	if strings.TrimSpace(s.DeviceID) == "" {
+		s.DeviceID = NewDeviceID()
+	}
+	return s.DeviceID
 }
 
 func DefaultRemotePath(clean string) string {
