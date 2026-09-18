@@ -266,6 +266,10 @@ export default function App() {
     EventsOn("sync:status", (list: SyncFolder[]) => {
       setSyncFolders(normalizeFolders(list));
     });
+    EventsOn("auth:revoked", () => {
+      void refreshStatus();
+      setNotice("This computer was signed out from the web");
+    });
     EventsOn("tray:flyout", () => {
       setView("flyout");
       void refreshSync();
@@ -277,10 +281,11 @@ export default function App() {
       EventsOff("upload:progress");
       EventsOff("download:progress");
       EventsOff("sync:status");
+      EventsOff("auth:revoked");
       EventsOff("tray:flyout");
       EventsOff("tray:full");
     };
-  }, [refreshSync]);
+  }, [refreshStatus, refreshSync]);
 
   useEffect(() => {
     if (!notice) return;

@@ -550,19 +550,37 @@ type SyncHeartbeatFolder struct {
 	PinCloud   int    `json:"pinCloud"`
 }
 
-func (c *Client) HeartbeatComputer(computerName, platform, appVersion string, folders []SyncHeartbeatFolder) error {
+type heartbeatAnswer struct {
+	Revoked  bool `json:"revoked"`
+	Computer any  `json:"computer"`
+}
+
+func parseHeartbeatBody(raw []byte) (bool, error) {
+	var ans heartbeatAnswer
+	if err := json.Unmarshal(raw, &ans); err != nil {
+		return false, err
+	}
+	return ans.Revoked, nil
+}
+
+func (c *Client) HeartbeatComputer(deviceID, computerName, platform, appVersion string, folders []SyncHeartbeatFolder) (bool, error) {
 	if folders == nil {
 		folders = []SyncHeartbeatFolder{}
 	}
 	resp, err := c.req(http.MethodPost, "/sync/computers/heartbeat", nil, map[string]any{
+		"deviceId":     deviceID,
 		"computerName": computerName,
 		"platform":     platform,
 		"appVersion":   appVersion,
 		"folders":      folders,
 	})
 	if err != nil {
-		return err
+		return false, err
 	}
-	resp.Body.Close()
-	return nil
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return false, err
+	}
+	return parseHeartbeatBody(raw)
 }

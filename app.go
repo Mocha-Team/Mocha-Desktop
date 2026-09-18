@@ -88,6 +88,13 @@ func (a *App) startup(ctx context.Context) {
 		_ = config.Save(cfg)
 	}
 	a.cfg = cfg
+	a.cfg.EnsureDeviceID()
+	if dir, err := config.Dir(); err == nil {
+		raw, rerr := os.ReadFile(filepath.Join(dir, "config.json"))
+		if rerr != nil || !strings.Contains(string(raw), "deviceId") {
+			_ = config.Save(a.cfg)
+		}
+	}
 	if a.cfg.Settings.ContextMenuEnabled && contextmenu.Supported() {
 		_ = contextmenu.Enable()
 	}
@@ -179,7 +186,18 @@ func (a *App) sendHeartbeat() {
 			PinCloud:   cloud,
 		})
 	}
-	_ = a.client.HeartbeatComputer(host, goruntime.GOOS, desktopAppVersion, folders)
+	deviceID := a.cfg.EnsureDeviceID()
+	revoked, err := a.client.HeartbeatComputer(deviceID, host, goruntime.GOOS, desktopAppVersion, folders)
+	if err != nil || !revoked {
+		return
+	}
+	_ = auth.ClearKey()
+	a.apiKey = ""
+	a.rebuildClient()
+	for _, f := range a.syncMgr.List() {
+		a.syncMgr.Remove(f.Path)
+	}
+	a.emit("auth:revoked", nil)
 }
 
 const DefaultAPIURL = "https://api.mocha.my"
@@ -232,6 +250,7 @@ func (a *App) SaveConnection(appURL, apiKey string) error {
 	}
 	a.cfg.AppURL = appURL
 	a.cfg.ApiURL = DefaultAPIURL
+	a.cfg.DeviceID = config.NewDeviceID()
 	if err := config.Save(a.cfg); err != nil {
 		return err
 	}
