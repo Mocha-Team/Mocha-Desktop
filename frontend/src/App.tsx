@@ -1391,7 +1391,7 @@ export default function App() {
                   <span key={s} className={`h-1 flex-1 rounded-full transition-all duration-700 ease ${s <= wizardStep ? "bg-mocha-gold" : "bg-white/10"}`} />
                 ))}
               </div>
-              <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">
+              <div className="quiet-scroll mt-3 max-h-[320px] min-h-[320px] flex-1 space-y-2 overflow-y-auto">
                 <div key={wizardStep} className={wizardStepDir >= 0 ? "welcome-step welcome-from-right" : "welcome-step welcome-from-left"}>
                 {wizardStep === 1 && (
                   <div className="space-y-2">
@@ -1507,7 +1507,7 @@ export default function App() {
                 )}
                 </div>
               </div>
-              <div className="mt-3 flex items-center justify-between gap-2">
+              <div className="mt-3 flex shrink-0 items-center justify-between gap-2">
                 <button onClick={() => { setWizardStepDir(-1); setWizardStep((s) => Math.max(1, s - 1)); }} disabled={wizardStep === 1 || wizardBusy} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm disabled:opacity-50">Back</button>
                 {wizardStep < 5 ? (
                   <button onClick={() => { if (wizardStep === 2 && wizardSource === "remote" && wizardRemoteFiles.length === 0) void loadWizardRemote(); setWizardStepDir(1); setWizardStep((s) => Math.min(5, s + 1)); }} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">Continue</button>
