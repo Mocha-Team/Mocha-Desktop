@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	goruntime "runtime"
 	"strings"
@@ -306,9 +305,7 @@ func (a *App) DownloadAndApplyUpdate(assetURL, sha256hex, name string) (string, 
 	}
 	switch goruntime.GOOS {
 	case "windows":
-		cmd := exec.Command(tmpPath)
-		cmd.Dir = filepath.Dir(tmpPath)
-		if err := cmd.Start(); err != nil {
+		if err := updater.LaunchInstaller(tmpPath); err != nil {
 			wrapped := fmt.Errorf("installer saved to %s: %w", tmpPath, err)
 			emit("update:error", map[string]any{"error": wrapped.Error()})
 			return "", wrapped
