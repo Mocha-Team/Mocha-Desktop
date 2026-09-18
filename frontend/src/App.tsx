@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { EventsOff, EventsOn } from "../wailsjs/runtime/runtime";
-import { api, copyText, folderName, formatBytes, formatDate, formatSpeed, formatTime, isPreviewable, parseLines, type AppSettings, type ArchiveEntry, type FileItem, type PairFile, type Profile, type RemotePickFile, type RemoveSyncPreview, type RemoveSyncResult, type Share, type Status, type StorageInfo, type SyncConflict, type SyncFolder, type TransferProgress, type TrashItem } from "./lib";
+import { api, copyText, folderName, formatBytes, formatDate, formatTime, isPreviewable, parseLines, type AppSettings, type ArchiveEntry, type FileItem, type PairFile, type Profile, type RemotePickFile, type RemoveSyncPreview, type RemoveSyncResult, type Share, type Status, type StorageInfo, type SyncConflict, type SyncFolder, type TransferProgress, type TrashItem, type UpdateCheck } from "./lib";
 import { useRevealRoot } from "./hooks";
 import { Titlebar } from "./Titlebar";
 import { Flyout } from "./Flyout";
@@ -13,6 +13,7 @@ import { ModalShell } from "./components/ModalShell";
 import { ShareModal } from "./components/ShareModal";
 import { Startup } from "./components/Startup";
 import { Welcome } from "./components/Welcome";
+import { UpdateBanner } from "./components/UpdateBanner";
 
 type Tab = "files" | "shares" | "sync" | "activity" | "trash" | "settings";
 
@@ -46,11 +47,16 @@ export default function App() {
   const [wizardBusy, setWizardBusy] = useState(false);
   const [wizardKeepLocal, setWizardKeepLocal] = useState(true);
   const [pins, setPins] = useState<Record<string, Record<string, string>>>({});
-  const [pinsOpen, setPinsOpen] = useState<Set<string>>(new Set());
+  const [syncDetails, setSyncDetails] = useState<Set<string>>(new Set());
   const [conflicts, setConflicts] = useState<Record<string, SyncConflict[]>>({});
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
+  const [updateProgress, setUpdateProgress] = useState<number | null>(null);
+  const [updateError, setUpdateError] = useState<string | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
   const appUrl = "https://mocha.my";
   const [apiKey, setApiKey] = useState("");
   const [booted, setBooted] = useState(false);
@@ -98,6 +104,7 @@ export default function App() {
       setSettings(s);
       setFilesView(s.filesView === "grid" ? "grid" : "list");
     }).catch(() => undefined);
+    api.appVersion().then(setAppVersion).catch(() => undefined);
   }, [status?.configured]);
 
   const changeFilesView = useCallback(async (v: "list" | "grid") => {
@@ -217,6 +224,38 @@ export default function App() {
     }
   }, []);
 
+  async function manualUpdateCheck() {
+    setUpdateError(null);
+    try {
+      const res = await api.checkForUpdates();
+      if (res?.available) {
+        setUpdateInfo(res);
+        setUpdateProgress(null);
+      } else {
+        setNotice("Mocha is up to date");
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Update check failed";
+      setNotice(msg.includes("no update for") ? "Updates are not available for this platform" : msg);
+    }
+  }
+
+  async function applyUpdate() {
+    if (!updateInfo?.asset || updateBusy) return;
+    setUpdateBusy(true);
+    setUpdateError(null);
+    try {
+      const dest = await api.downloadAndApplyUpdate(updateInfo.asset.url, updateInfo.asset.sha256, updateInfo.asset.name);
+      setUpdateInfo(null);
+      setUpdateProgress(null);
+      setUpdateBusy(false);
+      setNotice(typeof dest === "string" && dest ? `Update ready: ${dest}` : "Update applied, restart to finish");
+    } catch (err) {
+      setUpdateError(err instanceof Error ? err.message : "Update failed");
+      setUpdateBusy(false);
+    }
+  }
+
   useEffect(() => {
     const started = Date.now();
     let timer = 0;
@@ -277,13 +316,26 @@ export default function App() {
     EventsOn("tray:full", () => {
       setView("full");
     });
+    EventsOn("update:available", (res: UpdateCheck) => {
+      setUpdateInfo(res);
+      setUpdateProgress(null);
+      setUpdateError(null);
+    });
+    EventsOn("update:progress", (p: { loaded: number; total: number }) => {
+      if (p.total > 0) setUpdateProgress(Math.round((p.loaded / p.total) * 100));
+    });
+    EventsOn("update:error", (p: { error: string }) => {
+      setUpdateError(p.error || "Update failed");
+      setUpdateBusy(false);
+    });
+    EventsOn("update:applied", (p: { path: string }) => {
+      setUpdateInfo(null);
+      setUpdateProgress(null);
+      setUpdateBusy(false);
+      setNotice(p?.path ? `Update ready: ${p.path}` : "Update applied, restart to finish");
+    });
     return () => {
-      EventsOff("upload:progress");
-      EventsOff("download:progress");
-      EventsOff("sync:status");
-      EventsOff("auth:revoked");
-      EventsOff("tray:flyout");
-      EventsOff("tray:full");
+      for (const e of ["upload:progress", "download:progress", "sync:status", "auth:revoked", "tray:flyout", "tray:full", "update:available", "update:progress", "update:error", "update:applied"]) EventsOff(e);
     };
   }, [refreshStatus, refreshSync]);
 
@@ -509,11 +561,11 @@ export default function App() {
       await api.rescanPair(pairId);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Rescan failed");
+      setNotice(err instanceof Error ? err.message : "Sync failed");
     }
   }
 
-  async function skipPairError(pairId: string) {
+  async function dismissPairError(pairId: string) {
     try {
       await api.clearSyncError(pairId);
       await refreshSync();
@@ -622,21 +674,27 @@ export default function App() {
     }
   }
 
-  async function togglePins(pairId: string) {
-    const open = new Set(pinsOpen);
+  async function toggleDetails(pairId: string) {
+    const open = new Set(syncDetails);
     if (open.has(pairId)) {
       open.delete(pairId);
-      setPinsOpen(open);
+      setSyncDetails(open);
       return;
     }
     try {
       const m = await api.getFilePins(pairId);
       setPins((p) => ({ ...p, [pairId]: m || {} }));
-      open.add(pairId);
-      setPinsOpen(open);
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Pins failed");
+    } catch {
+      setPins((p) => ({ ...p, [pairId]: p[pairId] || {} }));
     }
+    try {
+      const list = await api.listConflicts(pairId);
+      setConflicts((c) => ({ ...c, [pairId]: list || [] }));
+    } catch {
+      setConflicts((c) => ({ ...c, [pairId]: c[pairId] || [] }));
+    }
+    open.add(pairId);
+    setSyncDetails(open);
   }
 
   async function togglePin(pairId: string, rel: string, current: string) {
@@ -653,7 +711,6 @@ export default function App() {
     try {
       const list = await api.listConflicts(pairId);
       setConflicts((c) => ({ ...c, [pairId]: list || [] }));
-      if ((list || []).length === 0) setNotice("No conflicts");
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Conflicts failed");
     }
@@ -815,17 +872,7 @@ export default function App() {
     await refreshData();
   }
 
-  async function rescanSync() {
-    try {
-      await api.rescanSync();
-      await refreshSync();
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Rescan failed");
-    }
-  }
-
   const activeTransfers = useMemo(() => Object.values(transfers).slice(-6).reverse(), [transfers]);
-  const syncingNow = useMemo(() => Object.values(transfers).filter((t) => t.jobId.startsWith("sync-") && t.status !== "done" && t.status !== "error" && t.status !== "cancelled").reverse(), [transfers]);
 
   if (view === "flyout") {
     return (
@@ -958,6 +1005,16 @@ export default function App() {
           </div>
         </div>
 
+        {updateInfo?.available && (
+          <UpdateBanner
+            info={updateInfo}
+            progress={updateProgress}
+            error={updateError}
+            busy={updateBusy}
+            onUpdate={() => void applyUpdate()}
+            onDismiss={() => setUpdateInfo(null)}
+          />
+        )}
         {notice && tab !== "files" && <div className="reveal-fade is-visible mt-4 shrink-0 rounded-2xl border border-mocha-gold/20 bg-mocha-gold/10 px-4 py-2.5 text-[13px] text-mocha-goldbright">{notice}</div>}
 
         {tab === "files" && (
@@ -1017,132 +1074,45 @@ export default function App() {
         )}
 
         {tab === "sync" && (
-          <div key={tab} className="mt-5 grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-hidden md:grid-cols-12">
-            <div className="bezel-shell reveal-fade flex min-h-0 flex-col md:col-span-8">
-              <div className="bezel-core flex min-h-0 flex-1 flex-col p-2">
-                <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
-                  <span className="text-[13px] text-mocha-secondary">
-                    {syncFolders.length === 0 ? "No folders watched" : `${syncFolders.length} folder${syncFolders.length === 1 ? "" : "s"} watched`}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button onClick={openWizard} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
-                      Add sync
-                      <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110"><ArrowIcon /></span>
-                    </button>
-                  </div>
-                </div>
-                <div className="files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-1.5">
-                  {syncFolders.map((f) => (
-                    <div key={f.path} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-white/10">
+          <div key={tab} className="bezel-shell reveal-fade mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
+            <div className="bezel-core flex min-h-0 flex-1 flex-col p-2">
+              <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
+                <span className="text-[13px] text-mocha-secondary">
+                  {syncFolders.length === 0 ? "No folders watched" : `${syncFolders.length} folder${syncFolders.length === 1 ? "" : "s"}`}
+                </span>
+                <button onClick={openWizard} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
+                  Add sync
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110"><ArrowIcon /></span>
+                </button>
+              </div>
+              <div className="files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-1.5">
+                {syncFolders.map((f) => {
+                  const key = pairKeyFor(f);
+                  const paused = !!(f.paused || f.status === "paused");
+                  const statusText = paused ? "Paused" : f.status === "scanning" ? "Scanning" : f.status === "syncing" ? (f.pending > 0 ? `${f.pending} left` : "Syncing") : f.status === "error" ? "Needs attention" : "Up to date";
+                  const details = syncDetails.has(key);
+                  const folderConflicts = conflicts[key] || [];
+                  return (
+                    <div key={f.path} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
                       <div className="flex items-center gap-3">
                         <FolderGlyph />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium">{folderName(f.path)}</div>
-                          <div className="mt-0.5 truncate font-mono text-[11px] text-mocha-muted">{f.path}</div>
-                          {f.remotePath && (
-                            <div className="mt-0.5 truncate font-mono text-[11px] text-mocha-gold">syncs to {f.remotePath}</div>
-                          )}
+                          <div className="mt-0.5 truncate font-mono text-[11px] text-mocha-muted">{f.path}{f.pending > 0 ? ` · ${f.pending} waiting` : ""}{f.files > 0 ? ` · ${f.files} files` : ""}{f.lastSync > 0 ? ` · synced ${formatTime(f.lastSync)}` : ""}</div>
                         </div>
-                        <span className={`shrink-0 font-mono text-[11px] ${f.status === "error" ? "text-red-300" : f.status === "idle" ? "text-mocha-muted" : "text-mocha-gold"}`}>
-                          {f.paused || f.status === "paused" ? "Paused" : f.status === "scanning" ? "Scanning" : f.status === "syncing" ? (f.pending > 0 ? `${f.pending} left` : "Syncing") : f.status === "error" ? "Error" : "Up to date"}
-                        </span>
-                        <button onClick={() => void togglePause(pairKeyFor(f), !!(f.paused || f.status === "paused"))} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">{f.paused || f.status === "paused" ? "Resume" : "Pause"}</button>
-                        <button onClick={() => void rescanPair(pairKeyFor(f))} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">Rescan</button>
-                        <button onClick={() => void openIgnoreEditor(f.path)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">Ignores</button>
-                        <button onClick={() => removeFolder(pairKeyFor(f))} className="glass-button shrink-0 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200">Remove</button>
+                        <span className={`shrink-0 font-mono text-[11px] ${f.status === "error" ? "text-red-300" : f.status === "idle" ? "text-mocha-muted" : "text-mocha-gold"}`}>{statusText}</span>
                       </div>
                       <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 font-mono text-[11px] text-mocha-secondary">{f.direction || "upload-only"}</span>
-                        <select value={f.direction || "upload-only"} onChange={(e) => void changeDirection(pairKeyFor(f), e.target.value)} className="field rounded-full px-2 py-1 font-mono text-[11px]">
-                          <option value="upload-only">upload-only</option>
-                          <option value="download-only">download-only</option>
-                          <option value="mirror">mirror</option>
+                        <select value={f.direction || "upload-only"} onChange={(e) => void changeDirection(key, e.target.value)} className="field rounded-full px-2 py-1 font-mono text-[11px]">
+                          <option value="upload-only">Send to Mocha</option>
+                          <option value="download-only">Get from Mocha</option>
+                          <option value="mirror">Keep in sync</option>
                         </select>
-                        <button onClick={() => void togglePins(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Pins</button>
-                        <button onClick={() => void loadConflictsFor(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Conflicts</button>
+                        <button onClick={() => void rescanPair(key)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">Sync now</button>
+                        <button onClick={() => void togglePause(key, paused)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">{paused ? "Resume" : "Pause"}</button>
+                        <button onClick={() => void toggleDetails(key)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1.5 text-xs">{details ? "Hide" : "Details"}</button>
+                        <button onClick={() => removeFolder(key)} className="glass-button shrink-0 rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200">Remove</button>
                       </div>
-                      {pinsOpen.has(pairKeyFor(f)) && (
-                        <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
-                          {pairFiles(f).map((pf) => (
-                            <div key={pf.rel} className="flex items-center justify-between gap-2 font-mono text-[11px]">
-                              <span className="truncate text-mocha-muted">{pf.rel}</span>
-                              <button onClick={() => void togglePin(pairKeyFor(f), pf.rel, pf.pin)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1 text-[11px]">{pf.pin === "cloud" ? "Cloud" : "Keep"}</button>
-                            </div>
-                          ))}
-                          {pairFiles(f).length === 0 && (
-                            <div className="font-mono text-[11px] text-mocha-dim">No pinned files</div>
-                          )}
-                        </div>
-                      )}
-                      {(conflicts[pairKeyFor(f)] || []).length > 0 && (
-                        <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
-                          {(conflicts[pairKeyFor(f)] || []).map((c) => (
-                            <div key={c.rel} className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
-                              <span className="truncate text-mocha-secondary">{c.rel}</span>
-                              <span className="flex gap-1">
-                                <button onClick={() => void resolveFor(pairKeyFor(f), c.rel, "keep-local")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep local</button>
-                                <button onClick={() => void resolveFor(pairKeyFor(f), c.rel, "keep-remote")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep remote</button>
-                                <button onClick={() => void resolveFor(pairKeyFor(f), c.rel, "keep-both")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep both</button>
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                      {confirmRemove === pairKeyFor(f) && !removePreview && (
-                        <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
-                          <div className="font-serif text-[15px] italic text-mocha-secondary">Stop syncing this folder?</div>
-                          <div className="mt-1 font-mono text-[11px] text-mocha-muted">Uploaded copies stay on the server unless deleted.</div>
-                          <div className="mt-2.5 flex flex-wrap gap-2">
-                            <button disabled={removing || previewLoading} onClick={() => keepOnlyFolder(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">Keep files</button>
-                            <button disabled={removing || previewLoading} onClick={() => previewDeleteFiles(pairKeyFor(f))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">{previewLoading ? "Checking..." : "Delete files too"}</button>
-                            <button disabled={removing || previewLoading} onClick={() => { setRemovePreview(null); setConfirmRemove(null); }} className="glass-button rounded-full px-3 py-1.5 font-mono text-[11px] text-mocha-muted disabled:opacity-50">Cancel</button>
-                          </div>
-                        </div>
-                      )}
-                      {removePreview && removePreview.path === pairKeyFor(f) && (
-                        <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
-                          {removePreview.preview.total === 0 ? (
-                            <>
-                              <div className="font-serif text-[15px] italic text-mocha-secondary">No uploaded copies found</div>
-                              <div className="mt-1 font-mono text-[11px] text-mocha-muted">Nothing on the server matches this folder.</div>
-                            </>
-                          ) : (
-                            <>
-                              <div className="font-serif text-[15px] italic text-mocha-secondary">Permanently delete {removePreview.preview.matched} file{removePreview.preview.matched === 1 ? "" : "s"} from the server{removePreview.preview.remotePath ? ` in ${removePreview.preview.remotePath}` : ""}?</div>
-                              <div className="quiet-scroll mt-2 max-h-32 space-y-1 overflow-y-auto">
-                                {removePreview.preview.files.map((file) => (
-                                  <div key={file.rel} className="flex items-center justify-between gap-2 font-mono text-[11px]">
-                                    <span className={`truncate ${file.matched ? "text-mocha-secondary" : "text-mocha-dim"}`}>{file.rel}</span>
-                                    <span className="shrink-0 text-mocha-dim">{formatBytes(file.size)}{file.matched ? "" : " · keep"}</span>
-                                  </div>
-                                ))}
-                                {removePreview.preview.truncated && (
-                                  <div className="font-mono text-[11px] text-mocha-dim">+ more not shown</div>
-                                )}
-                              </div>
-                              {removePreview.preview.unmatched > 0 && (
-                                <div className="mt-2 font-mono text-[11px] text-mocha-muted">{removePreview.preview.unmatched} could not be matched and will be kept.</div>
-                              )}
-                            </>
-                          )}
-                          <div className="mt-2.5 flex flex-wrap gap-2">
-                            {removePreview.preview.matched > 0 && (
-                              <button disabled={removing} onClick={() => executeDeleteFiles(pairKeyFor(f))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">Delete {removePreview.preview.matched} file{removePreview.preview.matched === 1 ? "" : "s"}</button>
-                            )}
-                            <button disabled={removing} onClick={() => keepOnlyFolder(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">{removePreview.preview.total === 0 ? "Stop sync anyway" : "Keep files"}</button>
-                            <button disabled={removing} onClick={() => { setRemovePreview(null); setConfirmRemove(null); }} className="glass-button rounded-full px-3 py-1.5 font-mono text-[11px] text-mocha-muted disabled:opacity-50">Cancel</button>
-                          </div>
-                        </div>
-                      )}
-                      {f.status === "error" && f.error && (
-                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                          <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-red-300">{f.error}</div>
-                          <span className="flex shrink-0 gap-1">
-                            <button onClick={() => void rescanPair(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Retry</button>
-                            <button onClick={() => void skipPairError(pairKeyFor(f))} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Skip</button>
-                          </span>
-                        </div>
-                      )}
                       {f.status === "syncing" && f.current && (
                         <div className="mt-2.5">
                           <div className="flex items-center justify-between font-mono text-[11px] text-mocha-muted">
@@ -1150,64 +1120,77 @@ export default function App() {
                             <span className="ml-2 shrink-0 tabular-nums">{Math.round(f.progress || 0)}%</span>
                           </div>
                           <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/5">
-                            <div className="h-full rounded-full bg-mocha-gold transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]" style={{ width: `${Math.min(100, f.progress || 0)}%` }} />
+                            <div className="h-full rounded-full bg-mocha-gold" style={{ width: `${Math.min(100, f.progress || 0)}%` }} />
                           </div>
                         </div>
                       )}
-                      {f.status === "idle" && (
-                        <div className="mt-1.5 font-mono text-[11px] text-mocha-muted">
-                          {f.files} file{f.files === 1 ? "" : "s"}{f.lastSync > 0 ? ` · synced ${formatTime(f.lastSync)}` : ""}
+                      {f.status === "error" && f.error && (
+                        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                          <div className="min-w-0 flex-1 truncate font-mono text-[11px] text-red-300">{f.error}</div>
+                          <button onClick={() => void dismissPairError(key)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1 text-[11px]">Dismiss</button>
                         </div>
                       )}
-                      {f.queued.length > 0 && (
-                        <div className="mt-2 space-y-1 border-t border-white/5 pt-2">
-                          {f.queued.map((q) => (
-                            <div key={q} className="flex items-center justify-between gap-2 font-mono text-[11px]">
-                              <span className="truncate text-mocha-muted">{q}</span>
-                              <span className="shrink-0 text-mocha-dim">waiting</span>
+                      {details && (
+                        <div className="mt-2 space-y-2 border-t border-white/5 pt-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button onClick={() => void openIgnoreEditor(f.path)} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Ignore rules</button>
+                            <button onClick={() => void loadConflictsFor(key)} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Check conflicts{folderConflicts.length > 0 ? ` (${folderConflicts.length})` : ""}</button>
+                          </div>
+                          {folderConflicts.length > 0 && (
+                            <div className="space-y-1">
+                              {folderConflicts.map((c) => (
+                                <div key={c.rel} className="flex flex-wrap items-center justify-between gap-2 font-mono text-[11px]">
+                                  <span className="truncate text-mocha-secondary">{c.rel}</span>
+                                  <span className="flex gap-1">
+                                    <button onClick={() => void resolveFor(key, c.rel, "keep-local")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep local</button>
+                                    <button onClick={() => void resolveFor(key, c.rel, "keep-remote")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep remote</button>
+                                    <button onClick={() => void resolveFor(key, c.rel, "keep-both")} className="glass-button btn-ghost rounded-full px-2 py-1 text-[11px]">Keep both</button>
+                                  </span>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                          {f.pending > f.queued.length && (
-                            <div className="font-mono text-[11px] text-mocha-dim">+ {f.pending - f.queued.length} more</div>
                           )}
+                          <div className="space-y-1">
+                            {pairFiles(f).slice(0, 20).map((pf) => (
+                              <div key={pf.rel} className="flex items-center justify-between gap-2 font-mono text-[11px]">
+                                <span className="truncate text-mocha-muted">{pf.rel}</span>
+                                <button onClick={() => void togglePin(key, pf.rel, pf.pin)} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1 text-[11px]">{pf.pin === "cloud" ? "Cloud" : "Keep"}</button>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {confirmRemove === key && !removePreview && (
+                        <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
+                          <div className="font-serif text-[15px] italic text-mocha-secondary">Stop syncing this folder?</div>
+                          <div className="mt-2.5 flex flex-wrap gap-2">
+                            <button disabled={removing || previewLoading} onClick={() => keepOnlyFolder(key)} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">Keep files</button>
+                            <button disabled={removing || previewLoading} onClick={() => previewDeleteFiles(key)} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">{previewLoading ? "Checking..." : "Delete files too"}</button>
+                            <button disabled={removing || previewLoading} onClick={() => { setRemovePreview(null); setConfirmRemove(null); }} className="glass-button rounded-full px-3 py-1.5 font-mono text-[11px] text-mocha-muted disabled:opacity-50">Cancel</button>
+                          </div>
+                        </div>
+                      )}
+                      {removePreview && removePreview.path === key && (
+                        <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
+                          <div className="font-serif text-[15px] italic text-mocha-secondary">Delete {removePreview.preview.matched} file{removePreview.preview.matched === 1 ? "" : "s"} from the server?</div>
+                          <div className="mt-2.5 flex flex-wrap gap-2">
+                            {removePreview.preview.matched > 0 && (
+                              <button disabled={removing} onClick={() => executeDeleteFiles(key)} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-3 py-1.5 text-xs text-red-200 disabled:opacity-50">Delete</button>
+                            )}
+                            <button disabled={removing} onClick={() => keepOnlyFolder(key)} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">Keep files</button>
+                            <button disabled={removing} onClick={() => { setRemovePreview(null); setConfirmRemove(null); }} className="glass-button rounded-full px-3 py-1.5 font-mono text-[11px] text-mocha-muted disabled:opacity-50">Cancel</button>
+                          </div>
                         </div>
                       )}
                     </div>
-                  ))}
-                  {syncFolders.length === 0 && (
-                    <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
-                      <div className="font-serif text-2xl italic text-mocha-secondary">No watched folders</div>
-                      <p className="mx-auto mt-2 max-w-xs text-sm text-mocha-muted">Add a folder and everything inside it uploads automatically. New and changed files sync on their own.</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-            <div className="bezel-shell reveal-fade flex min-h-0 flex-col md:col-span-4">
-              <div className="bezel-core flex min-h-0 flex-1 flex-col p-4">
-                <div className="flex shrink-0 items-center justify-between">
-                  <span className="text-[13px] text-mocha-secondary">
-                    {syncingNow.length === 0 ? "Nothing syncing" : `Syncing ${syncingNow.length} file${syncingNow.length === 1 ? "" : "s"}`}
-                  </span>
-                  <button onClick={rescanSync} className="glass-button btn-ghost shrink-0 rounded-full px-3 py-1 text-[11px]">Rescan</button>
-                </div>
-                <div className="quiet-scroll mt-3 flex min-h-0 flex-1 flex-col space-y-1.5">
-                  {syncingNow.map((t) => (
-                    <div key={t.jobId} className="rounded-2xl border border-white/5 bg-white/[0.03] px-3 py-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="truncate text-[13px]">{t.fileName || t.jobId.slice(0, 8)}</span>
-                        <span className="shrink-0 font-mono text-[11px] tabular-nums text-mocha-gold">{Math.round(t.percent || 0)}%</span>
-                      </div>
-                      <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/5">
-                        <div className="h-full rounded-full bg-mocha-gold transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]" style={{ width: `${Math.min(100, t.percent || 0)}%` }} />
-                      </div>
-                      <div className="mt-1 font-mono text-[11px] text-mocha-muted">{t.speedBps ? formatSpeed(t.speedBps) : ""}</div>
-                    </div>
-                  ))}
-                  {syncingNow.length === 0 && (
-                    <div className="flex flex-1 items-center justify-center py-8 text-center font-serif text-xl italic text-mocha-muted">Everything is in sync.</div>
-                  )}
-                </div>
+                  );
+                })}
+                {syncFolders.length === 0 && (
+                  <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+                    <div className="font-serif text-2xl italic text-mocha-secondary">No watched folders</div>
+                    <p className="mx-auto mt-2 max-w-xs text-sm text-mocha-muted">Add a folder and everything inside it uploads automatically.</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -1290,8 +1273,13 @@ export default function App() {
                   onChange={(v) => updateSettings({ launchAtStartup: v })}
                 />
               )}
+              <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Updates</div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-[11px] text-mocha-secondary">{appVersion ? `Version ${appVersion}` : "Version unknown"}</span>
+                <button onClick={() => void manualUpdateCheck()} className="glass-button btn-ghost rounded-full px-4 py-2 text-xs">Check for updates</button>
+              </div>
               <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Global ignore patterns (one per line)</div>
-              <textarea value={settingsDraft} onChange={(e) => setSettingsDraft(e.target.value)} rows={6} placeholder={".git/\nnode_modules/\n.DS_Store\n*.tmp"} className="field mt-2 w-full rounded-2xl px-4 py-3 font-mono text-xs" />
+              <textarea value={settingsDraft} onChange={(e) => setSettingsDraft(e.target.value)} rows={6} placeholder={".git/\nnode_modules/\n.DS_Store\n*.tmp"} className="field mt-2 w-full shrink-0 rounded-2xl px-4 py-3 font-mono text-xs" />
               <div>
                 <button onClick={() => void saveSettings()} disabled={settingsBusy} className="glass-button btn-gold rounded-full px-6 py-2 text-sm font-semibold disabled:opacity-60">{settingsBusy ? "Saving" : "Save settings"}</button>
               </div>

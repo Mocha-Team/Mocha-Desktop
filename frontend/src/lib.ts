@@ -336,4 +336,22 @@ export const api = {
   clearSyncError: (pairId: string) => invoke<void>("ClearSyncError", pairId),
   showMain: () => invoke<void>("ShowMain"),
   closeWindow: () => invoke<void>("CloseWindow"),
+  appVersion: () => invoke<string>("GetAppVersion"),
+  checkForUpdates: () => invoke<UpdateCheck>("CheckForUpdates"),
+  downloadAndApplyUpdate: (url: string, sha256: string, name: string) => invoke<string>("DownloadAndApplyUpdate", url, sha256, name),
 };
+
+export interface UpdateAsset {
+  os: string;
+  arch: string;
+  name: string;
+  url: string;
+  sha256: string;
+}
+
+export interface UpdateCheck {
+  available: boolean;
+  version: string;
+  notes: string;
+  asset: UpdateAsset | null;
+}
