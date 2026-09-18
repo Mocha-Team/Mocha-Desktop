@@ -15,7 +15,7 @@ const toneClass: Record<NoticeTone, string> = {
 };
 
 const dotClass: Record<NoticeTone, string> = {
-  info: "bg-mocha-gold shadow-[0_0_8px_rgba(201,168,108,0.6)]",
+  info: "bg-mocha-secondary shadow-[0_0_8px_rgba(184,174,161,0.45)]",
   success: "bg-[#8abf8a] shadow-[0_0_8px_rgba(138,191,138,0.5)]",
   error: "bg-[#d47c6b] shadow-[0_0_8px_rgba(212,124,107,0.5)]",
 };
