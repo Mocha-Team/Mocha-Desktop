@@ -12,7 +12,7 @@ interface Props {
 export function UpdateBanner({ info, progress, error, busy, onUpdate, onDismiss }: Props) {
   const manualUrl = info.asset ? info.asset.url : "https://github.com/Mocha-Team/Mocha-Desktop/releases/latest";
   return (
-    <div className="reveal-fade is-visible mt-4 shrink-0 rounded-2xl border border-mocha-gold/20 bg-mocha-gold/10 px-4 py-2.5 text-[13px] text-mocha-goldbright">
+    <div className="notice-in mt-4 shrink-0 rounded-2xl border border-mocha-gold/20 bg-mocha-gold/10 px-4 py-2.5 text-[13px] text-mocha-goldbright">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span>Mocha {info.version} is available</span>
         <span className="flex gap-2">

@@ -185,13 +185,13 @@ body,
   }
   .reveal {
     opacity: 0;
-    transform: translateY(4rem);
+    transform: scale(0.98);
     filter: blur(12px);
     transition: opacity 800ms var(--ease-fluid), transform 800ms var(--ease-fluid), filter 800ms var(--ease-fluid);
   }
   .reveal.is-visible {
     opacity: 1;
-    transform: translateY(0);
+    transform: scale(1);
     filter: blur(0);
   }
   .reveal-fade {
@@ -204,21 +204,115 @@ body,
     filter: blur(0);
   }
   .folder-enter {
-    will-change: transform, opacity;
+    will-change: transform, opacity, filter;
     animation: folder-enter 480ms var(--spring-smooth) both;
   }
   .file-row-in {
+    will-change: transform, opacity, filter;
+    animation: file-row-in 480ms var(--spring-smooth) both;
+  }
+  .tab-panel-in {
+    will-change: transform, opacity, filter;
+    animation: mocha-rise 520ms var(--spring-smooth) both;
+  }
+  .rise-in {
+    will-change: transform, opacity, filter;
+    animation: mocha-rise 520ms var(--spring-smooth) both;
+  }
+  .notice-in {
+    will-change: transform, opacity, filter;
+    animation: mocha-notice 380ms var(--ease-fluid) both;
+  }
+  .empty-in {
+    will-change: transform, opacity, filter;
+    animation: mocha-empty 520ms var(--spring-smooth) both;
+  }
+  .nav-enter {
+    will-change: transform, opacity, filter;
+    animation: mocha-notice 520ms var(--spring-smooth) both;
+  }
+  .card-hover {
+    transition: transform 320ms var(--ease-fluid), border-color 320ms var(--ease-fluid), background-color 320ms var(--ease-fluid), box-shadow 320ms var(--ease-fluid);
+  }
+  .card-hover:hover {
+    transform: scale(1.01);
+    border-color: rgba(201, 168, 108, 0.22);
+    box-shadow: 0 8px 28px -18px rgba(0, 0, 0, 0.9);
+  }
+  .thumb-zoom img,
+  .thumb-zoom video {
+    transition: transform 520ms var(--ease-fluid), opacity 380ms var(--ease-fluid), filter 520ms var(--ease-fluid);
+  }
+  .thumb-zoom:hover img,
+  .thumb-zoom:hover video {
+    transform: scale(1.04);
+  }
+  .thumb-fade {
+    will-change: transform, opacity, filter;
+    animation: thumb-in 520ms var(--ease-fluid) both;
+  }
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 20%, rgba(232, 201, 138, 0.14) 50%, transparent 80%);
+    animation: mocha-shimmer 1.6s var(--ease-fluid) infinite;
+  }
+  .glow-drift {
     will-change: transform, opacity;
-    animation: file-row-in 420ms var(--ease-fluid) both;
+    animation: mocha-drift 9s ease-in-out infinite alternate;
+  }
+  .progress-sheen {
+    position: relative;
+    overflow: hidden;
+  }
+  .progress-sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%);
+    animation: mocha-shimmer 2.2s var(--ease-fluid) infinite;
   }
   @keyframes folder-enter {
-    from { opacity: 0; transform: translateY(14px); filter: blur(6px); }
+    from { opacity: 0; transform: scale(0.98); filter: blur(10px); }
     60% { opacity: 1; filter: blur(0); }
-    to { opacity: 1; transform: translateY(0); filter: blur(0); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
   }
   @keyframes file-row-in {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
+    from { opacity: 0; transform: scale(0.98); filter: blur(8px); }
+    60% { opacity: 1; filter: blur(0); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  @keyframes mocha-rise {
+    from { opacity: 0; transform: scale(0.98); filter: blur(10px); }
+    60% { opacity: 1; filter: blur(0); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  @keyframes mocha-notice {
+    from { opacity: 0; transform: scale(0.98); filter: blur(8px); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  @keyframes mocha-empty {
+    from { opacity: 0; transform: scale(0.98); filter: blur(10px); }
+    60% { opacity: 1; filter: blur(0); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  @keyframes thumb-in {
+    from { opacity: 0; transform: scale(0.98); filter: blur(8px); }
+    to { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  @keyframes mocha-shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
+  }
+  @keyframes mocha-drift {
+    from { transform: translate(-50%, -50%) scale(1); opacity: 0.9; }
+    to { transform: translate(-48%, -52%) scale(1.08); opacity: 1; }
   }
   .preview-overlay {
     opacity: 0;
@@ -332,15 +426,15 @@ body,
 }
 
 @keyframes startup-in {
-  from { opacity: 0; transform: translateY(24px) scale(0.96); filter: blur(12px); }
+  from { opacity: 0; transform: scale(0.96); filter: blur(12px); }
   60% { opacity: 1; filter: blur(0); }
-  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
 }
 
 @keyframes preview-shell-in {
-  from { opacity: 0; transform: translateY(40px) scale(0.9); filter: blur(16px); }
+  from { opacity: 0; transform: scale(0.94); filter: blur(16px); }
   60% { opacity: 1; filter: blur(0); }
-  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
 }
 
 @keyframes preview-media-swap-in {
@@ -349,8 +443,8 @@ body,
 }
 
 @keyframes preview-shell-out {
-  from { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
-  to { opacity: 0; transform: translateY(24px) scale(0.96); filter: blur(8px); }
+  from { opacity: 1; transform: scale(1); filter: blur(0); }
+  to { opacity: 0; transform: scale(0.96); filter: blur(8px); }
 }
 
 @keyframes mocha-fade-out {
@@ -378,19 +472,19 @@ body,
 }
 
 @keyframes menu-pop-in {
-  from { opacity: 0; transform: translateY(-12px) scale(0.95); filter: blur(8px); }
+  from { opacity: 0; transform: scale(0.96); filter: blur(8px); }
   60% { opacity: 1; filter: blur(0); }
-  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  to { opacity: 1; transform: scale(1); filter: blur(0); }
 }
 
 @keyframes menu-pop-out {
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to { opacity: 0; transform: translateY(-8px) scale(0.96); }
+  from { opacity: 1; transform: scale(1); }
+  to { opacity: 0; transform: scale(0.96); }
 }
 
 @keyframes menu-item-in {
-  from { opacity: 0; transform: translateX(12px); }
-  to { opacity: 1; transform: translateX(0); }
+  from { opacity: 0; filter: blur(6px); }
+  to { opacity: 1; filter: blur(0); }
 }
 
 @keyframes loader-spin {
@@ -421,10 +515,21 @@ body,
   .menu-item,
   .folder-enter,
   .file-row-in,
+  .tab-panel-in,
+  .rise-in,
+  .notice-in,
+  .empty-in,
+  .nav-enter,
+  .thumb-fade,
+  .glow-drift,
   .loader-float,
   .loader-steam,
   .loader-breathe {
     animation: mocha-fade-in 200ms var(--ease-fluid) both;
+  }
+  .skeleton-shimmer::after,
+  .progress-sheen::after {
+    animation: none;
   }
   .loader-ring {
     animation-duration: 2.2s;

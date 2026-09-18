@@ -39,13 +39,13 @@ export function Flyout({ folders, transfers, onOpen, onClose }: {
       </div>
 
       <div className="quiet-scroll mt-3 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
-        <div>
+        <div className="rise-in">
           <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Sync</div>
           {folders.length === 0 && (
-            <div className="rounded-2xl border border-white/5 bg-white/[0.03] px-4 py-3 font-serif text-sm italic text-mocha-muted">No folders watched.</div>
+            <div className="empty-in rounded-2xl border border-white/5 bg-white/[0.03] px-4 py-3 font-serif text-sm italic text-mocha-muted">No folders watched.</div>
           )}
-          {folders.slice(0, 3).map((f) => (
-            <div key={f.path} className="mb-1.5 flex items-center gap-2 rounded-2xl border border-white/5 bg-white/[0.03] px-3.5 py-2.5">
+          {folders.slice(0, 3).map((f, i) => (
+            <div key={f.path} style={{ animationDelay: `${i * 70}ms` }} className="file-row-in card-hover mb-1.5 flex items-center gap-2 rounded-2xl border border-white/5 bg-white/[0.03] px-3.5 py-2.5">
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] font-medium">{folderName(f.path)}</div>
                 <div className="truncate font-mono text-[10px] text-mocha-muted">{f.path}</div>
@@ -60,19 +60,19 @@ export function Flyout({ folders, transfers, onOpen, onClose }: {
           )}
         </div>
 
-        <div>
+        <div className="rise-in" style={{ animationDelay: "140ms" }}>
           <div className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Activity</div>
           {shownTransfers.length === 0 && (
-            <div className="rounded-2xl border border-white/5 bg-white/[0.03] px-4 py-3 font-serif text-sm italic text-mocha-muted">All caught up.</div>
+            <div className="empty-in rounded-2xl border border-white/5 bg-white/[0.03] px-4 py-3 font-serif text-sm italic text-mocha-muted">All caught up.</div>
           )}
-          {shownTransfers.map((t) => (
-            <div key={t.jobId} className="mb-1.5 rounded-2xl border border-white/5 bg-white/[0.03] px-3.5 py-2.5">
+          {shownTransfers.map((t, i) => (
+            <div key={t.jobId} style={{ animationDelay: `${140 + i * 70}ms` }} className="file-row-in mb-1.5 rounded-2xl border border-white/5 bg-white/[0.03] px-3.5 py-2.5">
               <div className="flex items-center justify-between gap-2">
                 <span className="truncate text-[13px]">{t.fileName || t.jobId.slice(0, 8)}</span>
                 <span className="shrink-0 font-mono text-[10px] tabular-nums text-mocha-gold">{Math.round(t.percent || 0)}%</span>
               </div>
-              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/5">
-                <div className="h-full rounded-full bg-mocha-gold transition-all duration-300" style={{ width: `${Math.min(100, t.percent || 0)}%` }} />
+              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-white/5 progress-sheen">
+                <div className="h-full rounded-full bg-mocha-gold transition-all duration-500 ease-[cubic-bezier(0.32,0.72,0,1)]" style={{ width: `${Math.min(100, t.percent || 0)}%` }} />
               </div>
               <div className="mt-1 font-mono text-[10px] text-mocha-muted">
                 {t.status}{t.total ? ` · ${formatBytes(t.loaded)} / ${formatBytes(t.total)}` : ""}{t.speedBps ? ` · ${formatSpeed(t.speedBps)}` : ""}

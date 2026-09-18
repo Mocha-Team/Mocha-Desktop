@@ -923,7 +923,7 @@ export default function App() {
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-[var(--background)] px-4 pb-4 text-mocha-primary">
       <Titlebar />
 
-      <header className="fixed left-1/2 top-[52px] z-30 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2">
+      <header className="nav-enter fixed left-1/2 top-[52px] z-30 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2">
         <div className={`flex items-center gap-1 rounded-full border border-white/10 bg-black/60 py-1 pl-4 pr-1 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl`}>
           <span className="mr-2 font-serif text-base italic text-mocha-goldbright">Mocha</span>
           {(["files", "shares", "sync", "activity", "trash"] as Tab[]).map((t) => (
@@ -948,12 +948,12 @@ export default function App() {
       </header>
 
       <main className="relative mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden pt-24">
-        <div className="reveal-fade flex shrink-0 flex-wrap items-center justify-between gap-4">
+        <div className="rise-in flex shrink-0 flex-wrap items-center justify-between gap-4">
           <div>
             {tab === "files" && path !== "/" && (
               <div className="flex flex-wrap items-center gap-1 font-mono text-[11px] text-mocha-muted">
                 {crumbs.map((c, i) => (
-                  <span key={c.value} className="flex items-center gap-1">
+                  <span key={c.value} style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }} className="file-row-in flex items-center gap-1">
                     {i > 0 && (
                       <span className="text-mocha-dim" aria-hidden="true">
                         <CaretIcon />
@@ -1015,10 +1015,10 @@ export default function App() {
             onDismiss={() => setUpdateInfo(null)}
           />
         )}
-        {notice && tab !== "files" && <div className="reveal-fade is-visible mt-4 shrink-0 rounded-2xl border border-mocha-gold/20 bg-mocha-gold/10 px-4 py-2.5 text-[13px] text-mocha-goldbright">{notice}</div>}
+        {notice && tab !== "files" && <div className="notice-in mt-4 shrink-0 rounded-2xl border border-mocha-gold/20 bg-mocha-gold/10 px-4 py-2.5 text-[13px] text-mocha-goldbright">{notice}</div>}
 
         {tab === "files" && (
-          <div key={tab + path} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div key={tab + path} className="tab-panel-in flex min-h-0 flex-1 flex-col overflow-hidden">
             <FilesTab
               crumbs={crumbs}
               onNavigate={navigate}
@@ -1054,10 +1054,10 @@ export default function App() {
         )}
 
         {tab === "shares" && (
-          <div key={tab} className="bezel-shell reveal-fade mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div key={tab} className="bezel-shell tab-panel-in mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="bezel-core files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-2">
-              {shares.map((s) => (
-                <div key={s.token} className="flex flex-wrap items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-mocha-gold/20">
+              {shares.map((s, i) => (
+                <div key={s.token} style={{ animationDelay: `${Math.min(i, 12) * 45}ms` }} className="file-row-in card-hover flex flex-wrap items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
                    <div className="min-w-0 flex-1">
                      <div className="truncate text-sm font-medium">{s.original_name || s.folder_path || "Folder share"}</div>
                      <div className="mt-1 font-mono text-[11px] text-mocha-muted">/{s.token} {"·"} {s.download_count} downloads {"·"} {s.password_protected ? "locked" : "open"}</div>
@@ -1067,16 +1067,16 @@ export default function App() {
                 </div>
               ))}
               {shares.length === 0 && (
-                <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center font-serif text-xl italic text-mocha-secondary">No share links yet</div>
+                <div className="empty-in flex flex-1 flex-col items-center justify-center px-6 py-10 text-center font-serif text-xl italic text-mocha-secondary">No share links yet</div>
               )}
             </div>
           </div>
         )}
 
         {tab === "sync" && (
-          <div key={tab} className="bezel-shell reveal-fade mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div key={tab} className="bezel-shell tab-panel-in mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="bezel-core flex min-h-0 flex-1 flex-col p-2">
-              <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
+              <div className="rise-in flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
                 <span className="text-[13px] text-mocha-secondary">
                   {syncFolders.length === 0 ? "No folders watched" : `${syncFolders.length} folder${syncFolders.length === 1 ? "" : "s"}`}
                 </span>
@@ -1086,14 +1086,14 @@ export default function App() {
                 </button>
               </div>
               <div className="files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-1.5">
-                {syncFolders.map((f) => {
+                {syncFolders.map((f, idx) => {
                   const key = pairKeyFor(f);
                   const paused = !!(f.paused || f.status === "paused");
                   const statusText = paused ? "Paused" : f.status === "scanning" ? "Scanning" : f.status === "syncing" ? (f.pending > 0 ? `${f.pending} left` : "Syncing") : f.status === "error" ? "Needs attention" : "Up to date";
                   const details = syncDetails.has(key);
                   const folderConflicts = conflicts[key] || [];
                   return (
-                    <div key={f.path} className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                    <div key={f.path} style={{ animationDelay: `${Math.min(idx, 10) * 55}ms` }} className="file-row-in card-hover rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
                       <div className="flex items-center gap-3">
                         <FolderGlyph />
                         <div className="min-w-0 flex-1">
@@ -1119,8 +1119,8 @@ export default function App() {
                             <span className="truncate">{f.current}</span>
                             <span className="ml-2 shrink-0 tabular-nums">{Math.round(f.progress || 0)}%</span>
                           </div>
-                          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/5">
-                            <div className="h-full rounded-full bg-mocha-gold" style={{ width: `${Math.min(100, f.progress || 0)}%` }} />
+                          <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-white/5 progress-sheen">
+                            <div className="h-full rounded-full bg-mocha-gold transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]" style={{ width: `${Math.min(100, f.progress || 0)}%` }} />
                           </div>
                         </div>
                       )}
@@ -1161,7 +1161,7 @@ export default function App() {
                         </div>
                       )}
                       {confirmRemove === key && !removePreview && (
-                        <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
+                        <div className="notice-in mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
                           <div className="font-serif text-[15px] italic text-mocha-secondary">Stop syncing this folder?</div>
                           <div className="mt-2.5 flex flex-wrap gap-2">
                             <button disabled={removing || previewLoading} onClick={() => keepOnlyFolder(key)} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs disabled:opacity-50">Keep files</button>
@@ -1171,7 +1171,7 @@ export default function App() {
                         </div>
                       )}
                       {removePreview && removePreview.path === key && (
-                        <div className="mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
+                        <div className="notice-in mt-2.5 rounded-xl border border-red-400/20 bg-red-400/5 px-3 py-2.5">
                           <div className="font-serif text-[15px] italic text-mocha-secondary">Delete {removePreview.preview.matched} file{removePreview.preview.matched === 1 ? "" : "s"} from the server?</div>
                           <div className="mt-2.5 flex flex-wrap gap-2">
                             {removePreview.preview.matched > 0 && (
@@ -1186,7 +1186,7 @@ export default function App() {
                   );
                 })}
                 {syncFolders.length === 0 && (
-                  <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+                  <div className="empty-in flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
                     <div className="font-serif text-2xl italic text-mocha-secondary">No watched folders</div>
                     <p className="mx-auto mt-2 max-w-xs text-sm text-mocha-muted">Add a folder and everything inside it uploads automatically.</p>
                   </div>
@@ -1197,30 +1197,32 @@ export default function App() {
         )}
 
         {tab === "activity" && (
-          <div key={tab} className="bezel-shell reveal-fade mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div key={tab} className="bezel-shell tab-panel-in mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="bezel-core files-scroll flex min-h-0 flex-1 flex-col space-y-2 p-3">
-              {activeTransfers.map((t) => (
-                <TransferRow key={t.jobId} t={t} onCancel={(id) => void cancelTransfer(id)} />
+              {activeTransfers.map((t, i) => (
+                <div key={t.jobId} style={{ animationDelay: `${Math.min(i, 10) * 50}ms` }} className="file-row-in">
+                  <TransferRow t={t} onCancel={(id) => void cancelTransfer(id)} />
+                </div>
               ))}
               {activeTransfers.length === 0 && (
-                <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center font-serif text-xl italic text-mocha-secondary">No transfers yet</div>
+                <div className="empty-in flex flex-1 flex-col items-center justify-center px-6 py-10 text-center font-serif text-xl italic text-mocha-secondary">No transfers yet</div>
               )}
             </div>
           </div>
         )}
 
         {tab === "trash" && (
-          <div key={tab} className="bezel-shell reveal-fade mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div key={tab} className="bezel-shell tab-panel-in mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="bezel-core files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-2">
-              <div className="flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
+              <div className="rise-in flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
                 <span className="text-[13px] text-mocha-secondary">{trash.length === 0 ? "Trash is empty" : `${trash.length} deleted file${trash.length === 1 ? "" : "s"}`}</span>
                 {trash.length > 0 && (
                   <button onClick={() => api.clearTrash().then(() => refreshTrash()).catch((e) => setNotice(e instanceof Error ? e.message : "Empty failed"))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">Empty trash</button>
                 )}
               </div>
-              {trashLoading && <div className="px-4 py-6 text-center font-mono text-xs tracking-widest text-mocha-muted">LOADING TRASH</div>}
-              {trash.map((t) => (
-                <div key={t.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+              {trashLoading && <div className="flex flex-col gap-2 px-2 py-2"><div className="skeleton-shimmer h-14 rounded-xl" /><div className="skeleton-shimmer h-14 rounded-xl" style={{ animationDelay: "120ms" }} /></div>}
+              {trash.map((t, i) => (
+                <div key={t.id} style={{ animationDelay: `${Math.min(i, 12) * 45}ms` }} className="file-row-in card-hover flex flex-wrap items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-sm font-medium">{t.original_name}</div>
                     <div className="mt-1 font-mono text-[11px] text-mocha-muted">{formatBytes(t.size)} {"·"} {t.path} {"·"} {t.deleted_at ? formatDate(t.deleted_at) : ""}</div>
@@ -1229,58 +1231,68 @@ export default function App() {
                 </div>
               ))}
               {trash.length === 0 && !trashLoading && (
-                <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center font-serif text-xl italic text-mocha-secondary">Nothing in trash</div>
+                <div className="empty-in flex flex-1 flex-col items-center justify-center px-6 py-10 text-center font-serif text-xl italic text-mocha-secondary">Nothing in trash</div>
               )}
             </div>
           </div>
         )}
 
         {tab === "settings" && (
-          <div key={tab} className="bezel-shell reveal-fade mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div key={tab} className="bezel-shell tab-panel-in mt-5 flex min-h-0 flex-1 flex-col overflow-hidden">
             <div className="bezel-core quiet-scroll flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-4">
-              <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Sync behavior</div>
+              <div className="rise-in font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Sync behavior</div>
+              <div className="rise-in" style={{ animationDelay: "60ms" }}>
               <SettingRow
                 title="Drain in-flight on pause"
                 desc="On: finish current files, then pause. Off: cancel them."
                 checked={(settings?.pauseMode || "drain") === "drain"}
                 onChange={(v) => updateSettings({ pauseMode: v ? "drain" : "cancel" })}
               />
+              </div>
+              <div className="rise-in" style={{ animationDelay: "110ms" }}>
               <SettingRow
                 title="Bidirectional sync"
                 desc="Download remote changes. Size-based compare, same-size edits may not download."
                 checked={!!settings?.bidirectionalSync}
                 onChange={(v) => updateSettings({ bidirectionalSync: v })}
               />
+              </div>
+              <div className="rise-in" style={{ animationDelay: "160ms" }}>
               <SettingRow
                 title="Remote wins conflicts"
                 desc="On: download overwrites local. Off: skip on conflict."
                 checked={settings?.conflictPolicy === "remote-wins"}
                 onChange={(v) => updateSettings({ conflictPolicy: v ? "remote-wins" : "skip" })}
               />
+              </div>
               {menuSupported && (
+                <div className="rise-in" style={{ animationDelay: "210ms" }}>
                 <SettingRow
                   title="Quick Share context menu"
                   desc="Windows right-click entry that uploads the selected file and copies a share link."
                   checked={!!settings?.contextMenu}
                   onChange={(v) => updateSettings({ contextMenu: v })}
                 />
+                </div>
               )}
               {startupSupported && (
+                <div className="rise-in" style={{ animationDelay: "260ms" }}>
                 <SettingRow
                   title="Launch at startup"
                   desc="Start Mocha Desktop in the tray when you sign in."
                   checked={!!settings?.launchAtStartup}
                   onChange={(v) => updateSettings({ launchAtStartup: v })}
                 />
+                </div>
               )}
-              <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Updates</div>
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="rise-in mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted" style={{ animationDelay: "300ms" }}>Updates</div>
+              <div className="rise-in flex flex-wrap items-center justify-between gap-2" style={{ animationDelay: "340ms" }}>
                 <span className="font-mono text-[11px] text-mocha-secondary">{appVersion ? `Version ${appVersion}` : "Version unknown"}</span>
                 <button onClick={() => void manualUpdateCheck()} className="glass-button btn-ghost rounded-full px-4 py-2 text-xs">Check for updates</button>
               </div>
-              <div className="mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Global ignore patterns (one per line)</div>
-              <textarea value={settingsDraft} onChange={(e) => setSettingsDraft(e.target.value)} rows={6} placeholder={".git/\nnode_modules/\n.DS_Store\n*.tmp"} className="field mt-2 w-full shrink-0 rounded-2xl px-4 py-3 font-mono text-xs" />
-              <div>
+              <div className="rise-in mt-2 font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted" style={{ animationDelay: "380ms" }}>Global ignore patterns (one per line)</div>
+              <textarea value={settingsDraft} onChange={(e) => setSettingsDraft(e.target.value)} rows={6} placeholder={".git/\nnode_modules/\n.DS_Store\n*.tmp"} className="field rise-in mt-2 w-full shrink-0 rounded-2xl px-4 py-3 font-mono text-xs" style={{ animationDelay: "420ms" }} />
+              <div className="rise-in" style={{ animationDelay: "460ms" }}>
                 <button onClick={() => void saveSettings()} disabled={settingsBusy} className="glass-button btn-gold rounded-full px-6 py-2 text-sm font-semibold disabled:opacity-60">{settingsBusy ? "Saving" : "Save settings"}</button>
               </div>
             </div>
@@ -1293,10 +1305,10 @@ export default function App() {
         <ModalShell shellClassName="w-full max-w-sm" onClose={() => { setModal(null); setModalValue(""); }}>
           {(close) => (
             <div className="bezel-core space-y-3 p-4">
-              <div className="font-serif text-lg italic">{modal.kind === "mkdir" ? "New folder" : modal.kind === "renameFile" ? "Rename file" : modal.kind === "renameFolder" ? "Rename folder" : modal.kind.startsWith("move") ? "Move to path" : "Rename"}</div>
-              {(modal.kind === "moveFile" || modal.kind === "moveFolder") && <p className="font-mono text-[11px] text-mocha-muted">Destination folder path, e.g. /photos/</p>}
-              <input value={modalValue} onChange={(e) => setModalValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submitModal(close); }} autoFocus placeholder={modal.kind === "mkdir" ? "Folder name" : "Name"} className="field w-full rounded-2xl px-4 py-3 text-sm" />
-              <div className="flex gap-2">
+              <div className="rise-in font-serif text-lg italic">{modal.kind === "mkdir" ? "New folder" : modal.kind === "renameFile" ? "Rename file" : modal.kind === "renameFolder" ? "Rename folder" : modal.kind.startsWith("move") ? "Move to path" : "Rename"}</div>
+              {(modal.kind === "moveFile" || modal.kind === "moveFolder") && <p className="rise-in font-mono text-[11px] text-mocha-muted" style={{ animationDelay: "60ms" }}>Destination folder path, e.g. /photos/</p>}
+              <input value={modalValue} onChange={(e) => setModalValue(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") void submitModal(close); }} autoFocus placeholder={modal.kind === "mkdir" ? "Folder name" : "Name"} className="field rise-in w-full rounded-2xl px-4 py-3 text-sm" style={{ animationDelay: "110ms" }} />
+              <div className="rise-in flex gap-2" style={{ animationDelay: "160ms" }}>
                 <button onClick={() => void submitModal(close)} disabled={modalBusy} className="glass-button btn-gold flex-1 rounded-full py-2 text-sm font-semibold disabled:opacity-60">{modalBusy ? "Saving" : "Confirm"}</button>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm">Cancel</button>
               </div>
@@ -1318,14 +1330,14 @@ export default function App() {
         <ModalShell label={`Browse ${archiveFile.original_name}`} shellClassName="w-full max-w-lg" onClose={() => setArchiveFile(null)}>
           {(close) => (
             <div className="bezel-core flex max-h-[70dvh] flex-col p-4">
-              <div className="flex items-center justify-between gap-3">
+              <div className="rise-in flex items-center justify-between gap-3">
                 <div className="truncate font-serif text-lg italic">{archiveFile.original_name}</div>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Close</button>
               </div>
               <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
-                {archiveLoading && <div className="py-6 text-center font-mono text-xs tracking-widest text-mocha-muted">LOADING ARCHIVE</div>}
-                {!archiveLoading && archiveEntries.map((en) => (
-                  <div key={en.path} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
+                {archiveLoading && <div className="flex flex-col gap-2 py-2"><div className="skeleton-shimmer h-12 rounded-xl" /><div className="skeleton-shimmer h-12 rounded-xl" /></div>}
+                {!archiveLoading && archiveEntries.map((en, i) => (
+                  <div key={en.path} style={{ animationDelay: `${Math.min(i, 12) * 40}ms` }} className="file-row-in card-hover flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm">{en.path}</div>
                       <div className="font-mono text-[11px] text-mocha-muted">{en.isDirectory ? "folder" : formatBytes(en.fileSize)}</div>
@@ -1336,7 +1348,7 @@ export default function App() {
                   </div>
                 ))}
                 {!archiveLoading && archiveEntries.length === 0 && (
-                  <div className="py-6 text-center font-serif text-lg italic text-mocha-muted">No entries found</div>
+                  <div className="empty-in py-6 text-center font-serif text-lg italic text-mocha-muted">No entries found</div>
                 )}
               </div>
             </div>
@@ -1348,9 +1360,9 @@ export default function App() {
         <ModalShell shellClassName="w-full max-w-sm" onClose={() => setOverwrite(null)}>
           {(close) => (
             <div className="bezel-core space-y-3 p-4">
-              <div className="font-serif text-lg italic">File already exists</div>
-              <p className="break-all font-mono text-[11px] text-mocha-muted">{overwrite.dest}</p>
-              <div className="flex gap-2">
+              <div className="rise-in font-serif text-lg italic">File already exists</div>
+              <p className="rise-in break-all font-mono text-[11px] text-mocha-muted" style={{ animationDelay: "60ms" }}>{overwrite.dest}</p>
+              <div className="rise-in flex gap-2" style={{ animationDelay: "120ms" }}>
                 <button onClick={() => void confirmOverwrite(close)} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 flex-1 py-2 text-sm text-red-200">Overwrite</button>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm">Cancel</button>
               </div>
@@ -1363,10 +1375,10 @@ export default function App() {
         <ModalShell shellClassName="w-full max-w-sm" onClose={() => setIgnoreEditor(null)}>
           {(close) => (
             <div className="bezel-core space-y-3 p-4">
-              <div className="font-serif text-lg italic">Ignore rules</div>
-              <p className="break-all font-mono text-[11px] text-mocha-muted">{ignoreEditor}</p>
-              <textarea value={ignoreDraft} onChange={(e) => setIgnoreDraft(e.target.value)} rows={5} placeholder={"*.log\nbuild/"} className="field w-full rounded-2xl px-4 py-3 font-mono text-xs" />
-              <div className="flex gap-2">
+              <div className="rise-in font-serif text-lg italic">Ignore rules</div>
+              <p className="rise-in break-all font-mono text-[11px] text-mocha-muted" style={{ animationDelay: "60ms" }}>{ignoreEditor}</p>
+              <textarea value={ignoreDraft} onChange={(e) => setIgnoreDraft(e.target.value)} rows={5} placeholder={"*.log\nbuild/"} className="field rise-in w-full rounded-2xl px-4 py-3 font-mono text-xs" style={{ animationDelay: "110ms" }} />
+              <div className="rise-in flex gap-2" style={{ animationDelay: "160ms" }}>
                 <button onClick={() => void saveIgnoreEditor(close)} disabled={ignoreBusy} className="glass-button btn-gold flex-1 rounded-full py-2 text-sm font-semibold disabled:opacity-60">{ignoreBusy ? "Saving" : "Save"}</button>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm">Cancel</button>
               </div>

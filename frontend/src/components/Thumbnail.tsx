@@ -65,7 +65,7 @@ export function Thumbnail({ file, className = "" }: { file: FileItem; className?
         alt={file.original_name}
         draggable={false}
         onError={() => setFailed(true)}
-        className={`object-cover ${className || ""}`}
+        className={`thumb-fade object-cover ${className || ""}`}
       />
     );
   }
@@ -76,7 +76,7 @@ export function Thumbnail({ file, className = "" }: { file: FileItem; className?
       playsInline
       preload="metadata"
       onError={() => setFailed(true)}
-      className={`object-cover ${className || ""}`}
+      className={`thumb-fade object-cover ${className || ""}`}
     />
   );
 }

@@ -22,7 +22,7 @@ export function FileList({ files, selectedIds, onToggleSelect, actions }: {
       {files.map((f, i) => {
         const canPreview = isPreviewable(f);
         return (
-          <div key={f.id} style={{ animationDelay: `${Math.min(i, 12) * 30}ms` }} className="file-row-in group flex items-center gap-3 rounded-xl border border-transparent px-4 py-3 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-white/10 hover:bg-white/[0.04]">
+          <div key={f.id} style={{ animationDelay: `${Math.min(i, 12) * 30}ms` }} className="file-row-in card-hover group flex items-center gap-3 rounded-xl border border-transparent px-4 py-3 hover:border-white/10 hover:bg-white/[0.04]">
             <input type="checkbox" checked={selectedIds.has(f.id)} onChange={() => onToggleSelect(f.id)} aria-label={`Select ${f.original_name}`} className="h-4 w-4 shrink-0 accent-[#c9a227]" />
             <FileIcon file={f} />
             <div className="min-w-0 flex-1">
