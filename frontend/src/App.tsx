@@ -36,6 +36,7 @@ export default function App() {
   const [syncFolders, setSyncFolders] = useState<SyncFolder[]>([]);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [wizardStep, setWizardStep] = useState(1);
+  const [wizardStepDir, setWizardStepDir] = useState(1);
   const [wizardSource, setWizardSource] = useState<"local" | "remote">("local");
   const [wizardDirection, setWizardDirection] = useState("upload-only");
   const [wizardRemotePath, setWizardRemotePath] = useState("/");
@@ -577,6 +578,7 @@ export default function App() {
   }
 
   function openWizard() {
+    setWizardStepDir(1);
     setWizardStep(1);
     setWizardSource("local");
     setWizardDirection("upload-only");
@@ -713,6 +715,7 @@ export default function App() {
       setWizardOpen(false);
       setWizardRemoteFiles([]);
       setWizardRemoteChecked(new Set());
+      setWizardStepDir(1);
       setWizardStep(1);
       const s = await refreshStatus();
       setStatus(s);
@@ -1385,10 +1388,11 @@ export default function App() {
               </div>
               <div className="mt-3 flex items-center gap-1.5">
                 {[1, 2, 3, 4, 5].map((s) => (
-                  <span key={s} className={`h-1 flex-1 rounded-full ${s <= wizardStep ? "bg-mocha-gold" : "bg-white/10"}`} />
+                  <span key={s} className={`h-1 flex-1 rounded-full transition-all duration-700 ease ${s <= wizardStep ? "bg-mocha-gold" : "bg-white/10"}`} />
                 ))}
               </div>
               <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">
+                <div key={wizardStep} className={wizardStepDir >= 0 ? "welcome-step welcome-from-right" : "welcome-step welcome-from-left"}>
                 {wizardStep === 1 && (
                   <div className="space-y-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Where do you start</div>
@@ -1501,11 +1505,12 @@ export default function App() {
                     <div className="text-[13px] text-mocha-muted">Start sync opens the system dialog to pick the folder on this PC.</div>
                   </div>
                 )}
+                </div>
               </div>
               <div className="mt-3 flex items-center justify-between gap-2">
-                <button onClick={() => setWizardStep((s) => Math.max(1, s - 1))} disabled={wizardStep === 1 || wizardBusy} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm disabled:opacity-50">Back</button>
+                <button onClick={() => { setWizardStepDir(-1); setWizardStep((s) => Math.max(1, s - 1)); }} disabled={wizardStep === 1 || wizardBusy} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm disabled:opacity-50">Back</button>
                 {wizardStep < 5 ? (
-                  <button onClick={() => { if (wizardStep === 2 && wizardSource === "remote" && wizardRemoteFiles.length === 0) void loadWizardRemote(); setWizardStep((s) => Math.min(5, s + 1)); }} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">Continue</button>
+                  <button onClick={() => { if (wizardStep === 2 && wizardSource === "remote" && wizardRemoteFiles.length === 0) void loadWizardRemote(); setWizardStepDir(1); setWizardStep((s) => Math.min(5, s + 1)); }} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">Continue</button>
                 ) : (
                   <button onClick={() => void startWizardSync(close)} disabled={wizardBusy || !wizardCanNext()} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">{wizardBusy ? "Starting" : "Start sync"}</button>
                 )}
