@@ -34,12 +34,16 @@ export default function App() {
   const [shares, setShares] = useState<Share[]>([]);
   const [transfers, setTransfers] = useState<Record<string, TransferProgress>>({});
   const [syncFolders, setSyncFolders] = useState<SyncFolder[]>([]);
-  const [remoteOpen, setRemoteOpen] = useState(false);
-  const [remotePath, setRemotePath] = useState("/");
-  const [remoteFiles, setRemoteFiles] = useState<RemotePickFile[]>([]);
-  const [remoteChecked, setRemoteChecked] = useState<Set<string>>(new Set());
-  const [remoteLoading, setRemoteLoading] = useState(false);
-  const [remoteBusy, setRemoteBusy] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardStep, setWizardStep] = useState(1);
+  const [wizardSource, setWizardSource] = useState<"local" | "remote">("local");
+  const [wizardDirection, setWizardDirection] = useState("upload-only");
+  const [wizardRemotePath, setWizardRemotePath] = useState("/");
+  const [wizardRemoteFiles, setWizardRemoteFiles] = useState<RemotePickFile[]>([]);
+  const [wizardRemoteChecked, setWizardRemoteChecked] = useState<Set<string>>(new Set());
+  const [wizardRemoteLoading, setWizardRemoteLoading] = useState(false);
+  const [wizardBusy, setWizardBusy] = useState(false);
+  const [wizardKeepLocal, setWizardKeepLocal] = useState(true);
   const [pins, setPins] = useState<Record<string, Record<string, string>>>({});
   const [pinsOpen, setPinsOpen] = useState<Set<string>>(new Set());
   const [conflicts, setConflicts] = useState<Record<string, SyncConflict[]>>({});
@@ -566,18 +570,27 @@ export default function App() {
     if (await persistSettings(next)) setNotice("Settings saved");
   }
 
-  const [localDirection, setLocalDirection] = useState("upload-only");
-  const [remoteDirection, setRemoteDirection] = useState("mirror");
+  function wizardDirectionLabel(v: string): string {
+    if (v === "download-only") return "Get from Mocha";
+    if (v === "mirror") return "Keep both in sync";
+    return "Send to Mocha";
+  }
 
-  async function addFolder() {
-    try {
-      await api.addSyncFolderLocal(localDirection);
-      const s = await refreshStatus();
-      setStatus(s);
-      await refreshSync();
-    } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not add folder");
-    }
+  function openWizard() {
+    setWizardStep(1);
+    setWizardSource("local");
+    setWizardDirection("upload-only");
+    setWizardRemotePath("/");
+    setWizardRemoteFiles([]);
+    setWizardRemoteChecked(new Set());
+    setWizardKeepLocal(true);
+    setWizardBusy(false);
+    setWizardOpen(true);
+  }
+
+  function pickWizardSource(s: "local" | "remote") {
+    setWizardSource(s);
+    setWizardDirection(s === "remote" ? "mirror" : "upload-only");
   }
 
   function pairKeyFor(f: SyncFolder): string {
@@ -647,22 +660,22 @@ export default function App() {
     }
   }
 
-  async function loadRemote() {
-    const target = remotePath.trim() || "/";
-    setRemoteLoading(true);
+  async function loadWizardRemote() {
+    const target = wizardRemotePath.trim() || "/";
+    setWizardRemoteLoading(true);
     try {
       const list = await api.listRemoteForAttach(target);
-      setRemoteFiles(list || []);
-      setRemoteChecked(new Set((list || []).map((r) => r.rel)));
+      setWizardRemoteFiles(list || []);
+      setWizardRemoteChecked(new Set((list || []).map((r) => r.rel)));
     } catch (err) {
       setNotice(err instanceof Error ? err.message : "Remote list failed");
     } finally {
-      setRemoteLoading(false);
+      setWizardRemoteLoading(false);
     }
   }
 
-  function toggleRemoteCheck(rel: string) {
-    setRemoteChecked((prev) => {
+  function toggleWizardRemoteCheck(rel: string) {
+    setWizardRemoteChecked((prev) => {
       const next = new Set(prev);
       if (next.has(rel)) next.delete(rel);
       else next.add(rel);
@@ -670,30 +683,44 @@ export default function App() {
     });
   }
 
-  function toggleAllRemote() {
-    setRemoteChecked((prev) => {
-      if (prev.size === remoteFiles.length) return new Set<string>();
-      return new Set(remoteFiles.map((r) => r.rel));
+  function toggleAllWizardRemote() {
+    setWizardRemoteChecked((prev) => {
+      if (prev.size === wizardRemoteFiles.length) return new Set<string>();
+      return new Set(wizardRemoteFiles.map((r) => r.rel));
     });
   }
 
-  async function confirmRemote(close: () => void) {
-    const target = remotePath.trim() || "/";
-    if (remoteBusy) return;
-    setRemoteBusy(true);
+  function wizardCanNext(): boolean {
+    if (wizardStep === 2 && wizardSource === "remote") return wizardRemotePath.trim().length > 0;
+    if (wizardStep === 4 && wizardSource === "remote") return wizardRemoteChecked.size > 0;
+    return true;
+  }
+
+  async function startWizardSync(close: () => void) {
+    if (wizardBusy) return;
+    if (wizardSource === "remote" && wizardRemoteChecked.size === 0) {
+      setNotice("Pick at least one file to keep");
+      return;
+    }
+    setWizardBusy(true);
     try {
-      await api.addSyncFolderRemote(target, [...remoteChecked], remoteDirection);
+      if (wizardSource === "remote") {
+        await api.addSyncFolderRemote(wizardRemotePath.trim() || "/", [...wizardRemoteChecked], wizardDirection);
+      } else {
+        await api.addSyncFolderLocal(wizardDirection);
+      }
       close();
-      setRemoteOpen(false);
-      setRemoteFiles([]);
-      setRemoteChecked(new Set());
+      setWizardOpen(false);
+      setWizardRemoteFiles([]);
+      setWizardRemoteChecked(new Set());
+      setWizardStep(1);
       const s = await refreshStatus();
       setStatus(s);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Attach failed");
+      setNotice(err instanceof Error ? err.message : "Could not start sync");
     } finally {
-      setRemoteBusy(false);
+      setWizardBusy(false);
     }
   }
 
@@ -985,16 +1012,10 @@ export default function App() {
                     {syncFolders.length === 0 ? "No folders watched" : `${syncFolders.length} folder${syncFolders.length === 1 ? "" : "s"} watched`}
                   </span>
                   <div className="flex items-center gap-2">
-                    <select value={localDirection} onChange={(e) => setLocalDirection(e.target.value)} className="field rounded-full px-2 py-1 font-mono text-[11px]">
-                      <option value="upload-only">upload-only</option>
-                      <option value="download-only">download-only</option>
-                      <option value="mirror">mirror</option>
-                    </select>
-                    <button onClick={addFolder} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
-                      Add folder
+                    <button onClick={openWizard} className="glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98]">
+                      Add sync
                       <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110"><ArrowIcon /></span>
                     </button>
-                    <button onClick={() => { setRemoteOpen(true); setRemoteFiles([]); setRemoteChecked(new Set()); }} className="glass-button btn-ghost rounded-full px-4 py-2 text-[13px]">Attach remote</button>
                   </div>
                 </div>
                 <div className="files-scroll flex min-h-0 flex-1 flex-col space-y-1.5 p-1.5">
@@ -1353,44 +1374,142 @@ export default function App() {
         </ModalShell>
       )}
 
-      {remoteOpen && (
-        <ModalShell label="Attach remote folder" shellClassName="w-full max-w-lg" onClose={() => setRemoteOpen(false)}>
+      {wizardOpen && (
+        <ModalShell label="Add sync" shellClassName="w-full max-w-lg" onClose={() => setWizardOpen(false)}>
           {(close) => (
             <div className="bezel-core flex max-h-[70dvh] flex-col p-4">
               <div className="flex items-center justify-between gap-3">
-                <div className="truncate font-serif text-lg italic">Attach remote folder</div>
+                <div className="truncate font-serif text-lg italic">Add sync</div>
+                <span className="shrink-0 font-mono text-[11px] text-mocha-muted">Step {wizardStep} of 5</span>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Close</button>
               </div>
-              <div className="mt-3 flex gap-2">
-                <input value={remotePath} onChange={(e) => setRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
-                <select value={remoteDirection} onChange={(e) => setRemoteDirection(e.target.value)} className="field rounded-2xl px-2 py-2 font-mono text-xs">
-                  <option value="upload-only">upload-only</option>
-                  <option value="download-only">download-only</option>
-                  <option value="mirror">mirror</option>
-                </select>
-                <button onClick={() => void loadRemote()} disabled={remoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{remoteLoading ? "Loading" : "Load"}</button>
-              </div>
-              <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-1 overflow-y-auto">
-                {remoteFiles.map((rf) => (
-                  <label key={rf.rel} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
-                    <input type="checkbox" checked={remoteChecked.has(rf.rel)} onChange={() => toggleRemoteCheck(rf.rel)} className="h-4 w-4" />
-                    <span className="min-w-0 flex-1 truncate text-sm">{rf.rel}</span>
-                    <span className="shrink-0 font-mono text-[11px] text-mocha-muted">{formatBytes(rf.size)}</span>
-                  </label>
+              <div className="mt-3 flex items-center gap-1.5">
+                {[1, 2, 3, 4, 5].map((s) => (
+                  <span key={s} className={`h-1 flex-1 rounded-full ${s <= wizardStep ? "bg-mocha-gold" : "bg-white/10"}`} />
                 ))}
-                {!remoteLoading && remoteFiles.length === 0 && (
-                  <div className="py-6 text-center font-serif text-lg italic text-mocha-muted">Load a remote path to pick files</div>
+              </div>
+              <div className="quiet-scroll mt-3 min-h-0 flex-1 space-y-2 overflow-y-auto">
+                {wizardStep === 1 && (
+                  <div className="space-y-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Where do you start</div>
+                    <button onClick={() => pickWizardSource("local")} className={`block w-full rounded-xl border px-4 py-3 text-left transition-all duration-300 ${wizardSource === "local" ? "border-mocha-gold/40 bg-mocha-gold/10" : "border-white/5 bg-white/[0.02] hover:border-white/10"}`}>
+                      <div className="text-sm font-medium">This PC</div>
+                      <div className="mt-0.5 text-[13px] text-mocha-muted">Start with a folder on this computer</div>
+                    </button>
+                    <button onClick={() => pickWizardSource("remote")} className={`block w-full rounded-xl border px-4 py-3 text-left transition-all duration-300 ${wizardSource === "remote" ? "border-mocha-gold/40 bg-mocha-gold/10" : "border-white/5 bg-white/[0.02] hover:border-white/10"}`}>
+                      <div className="text-sm font-medium">Mocha</div>
+                      <div className="mt-0.5 text-[13px] text-mocha-muted">Start with files already in Mocha</div>
+                    </button>
+                  </div>
+                )}
+                {wizardStep === 2 && (
+                  <div className="space-y-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Pick a folder</div>
+                    {wizardSource === "local" ? (
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <div className="text-sm font-medium">Folder on this PC</div>
+                        <div className="mt-1 text-[13px] text-mocha-muted">You will pick the exact folder with the system dialog when you start sync.</div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <div className="flex gap-2">
+                          <input value={wizardRemotePath} onChange={(e) => setWizardRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
+                          <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{wizardRemoteLoading ? "Loading" : "Load"}</button>
+                        </div>
+                        <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteFiles.length === 0 ? "Browse Mocha, then load a path to see files." : `${wizardRemoteFiles.length} files found in Mocha.`}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                {wizardStep === 3 && (
+                  <div className="space-y-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Which way should files go</div>
+                    {[
+                      { value: "upload-only", title: "Send to Mocha", desc: "Files on this PC upload to Mocha" },
+                      { value: "download-only", title: "Get from Mocha", desc: "Files in Mocha download to this PC" },
+                      { value: "mirror", title: "Keep both in sync", desc: "Changes on either side sync both ways" },
+                    ].map((o) => (
+                      <button key={o.value} onClick={() => setWizardDirection(o.value)} className={`block w-full rounded-xl border px-4 py-3 text-left transition-all duration-300 ${wizardDirection === o.value ? "border-mocha-gold/40 bg-mocha-gold/10" : "border-white/5 bg-white/[0.02] hover:border-white/10"}`}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium">{o.title}</span>
+                          <span className="font-mono text-[11px] text-mocha-muted">{o.value}</span>
+                        </div>
+                        <div className="mt-0.5 text-[13px] text-mocha-muted">{o.desc}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {wizardStep === 4 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Keep on this PC</span>
+                      {wizardSource === "remote" && wizardRemoteFiles.length > 0 && (
+                        <button onClick={toggleAllWizardRemote} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Toggle all</button>
+                      )}
+                    </div>
+                    {wizardSource === "local" ? (
+                      <label className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                        <input type="checkbox" checked={wizardKeepLocal} onChange={(e) => setWizardKeepLocal(e.target.checked)} className="h-4 w-4" />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-sm">Keep on this PC</span>
+                          <span className="mt-0.5 block text-[13px] text-mocha-muted">All files in the folder stay here and sync.</span>
+                        </span>
+                      </label>
+                    ) : (
+                      <div className="space-y-1">
+                        {wizardRemoteFiles.map((rf) => (
+                          <label key={rf.rel} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
+                            <input type="checkbox" checked={wizardRemoteChecked.has(rf.rel)} onChange={() => toggleWizardRemoteCheck(rf.rel)} className="h-4 w-4" />
+                            <span className="min-w-0 flex-1 truncate text-sm">{rf.rel}</span>
+                            <span className="shrink-0 font-mono text-[11px] text-mocha-muted">{formatBytes(rf.size)}</span>
+                          </label>
+                        ))}
+                        {wizardRemoteFiles.length === 0 && (
+                          <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-[13px] text-mocha-muted">
+                            No files loaded yet.
+                            <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading || wizardRemotePath.trim().length === 0} className="glass-button btn-ghost ml-2 rounded-full px-3 py-1 text-xs disabled:opacity-50">{wizardRemoteLoading ? "Loading" : "Load now"}</button>
+                          </div>
+                        )}
+                        {wizardRemoteFiles.length > 0 && (
+                          <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteChecked.size} of {wizardRemoteFiles.length} kept on this PC</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+                {wizardStep === 5 && (
+                  <div className="space-y-2">
+                    <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Review and start</div>
+                    <div className="space-y-1 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-sm">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-mocha-muted">Local path</span>
+                        <span className="truncate font-mono text-[12px]">Picked with system dialog</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-mocha-muted">Mocha path</span>
+                        <span className="truncate font-mono text-[12px]">{wizardSource === "remote" ? (wizardRemotePath.trim() || "/") : "New folder in Mocha"}</span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-mocha-muted">Direction</span>
+                        <span className="truncate text-[13px]">{wizardDirectionLabel(wizardDirection)} <span className="font-mono text-[11px] text-mocha-muted">({wizardDirection})</span></span>
+                      </div>
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-mocha-muted">Files</span>
+                        <span className="truncate font-mono text-[12px]">{wizardSource === "remote" ? `${wizardRemoteChecked.size} of ${wizardRemoteFiles.length} kept on this PC` : wizardKeepLocal ? "All files, kept on this PC" : "All files"}</span>
+                      </div>
+                    </div>
+                    <div className="text-[13px] text-mocha-muted">Start sync opens the system dialog to pick the folder on this PC.</div>
+                  </div>
                 )}
               </div>
-              {remoteFiles.length > 0 && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
-                  <span className="font-mono text-[11px] text-mocha-muted">{remoteChecked.size} of {remoteFiles.length} checked</span>
-                  <span className="flex gap-2">
-                    <button onClick={toggleAllRemote} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Toggle all</button>
-                    <button onClick={() => void confirmRemote(close)} disabled={remoteBusy} className="glass-button btn-gold rounded-full px-4 py-1.5 text-sm font-semibold disabled:opacity-60">{remoteBusy ? "Attaching" : "Attach"}</button>
-                  </span>
-                </div>
-              )}
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <button onClick={() => setWizardStep((s) => Math.max(1, s - 1))} disabled={wizardStep === 1 || wizardBusy} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm disabled:opacity-50">Back</button>
+                {wizardStep < 5 ? (
+                  <button onClick={() => { if (wizardStep === 2 && wizardSource === "remote" && wizardRemoteFiles.length === 0) void loadWizardRemote(); setWizardStep((s) => Math.min(5, s + 1)); }} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">Continue</button>
+                ) : (
+                  <button onClick={() => void startWizardSync(close)} disabled={wizardBusy || !wizardCanNext()} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">{wizardBusy ? "Starting" : "Start sync"}</button>
+                )}
+              </div>
             </div>
           )}
         </ModalShell>
