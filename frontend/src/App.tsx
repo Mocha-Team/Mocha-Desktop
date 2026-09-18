@@ -593,6 +593,8 @@ export default function App() {
   function pickWizardSource(s: "local" | "remote") {
     setWizardSource(s);
     setWizardDirection(s === "remote" ? "mirror" : "upload-only");
+    setWizardRemoteFiles([]);
+    setWizardRemoteChecked(new Set());
   }
 
   function pairKeyFor(f: SyncFolder): string {
@@ -697,6 +699,9 @@ export default function App() {
     if (wizardStep === 4 && wizardSource === "remote") return wizardRemoteChecked.size > 0;
     return true;
   }
+
+  const wizardSteps = wizardSource === "local" ? ["source", "direction", "keep", "review"] : ["source", "folder", "direction", "files", "review"];
+  const wizardStage = wizardSteps[wizardStep - 1] ?? wizardSteps[0];
 
   async function startWizardSync(close: () => void) {
     if (wizardBusy) return;
@@ -1383,17 +1388,17 @@ export default function App() {
             <div className="bezel-core flex max-h-[70dvh] flex-col p-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="truncate font-serif text-lg italic">Add sync</div>
-                <span className="shrink-0 font-mono text-[11px] text-mocha-muted">Step {wizardStep} of 5</span>
+                <span className="shrink-0 font-mono text-[11px] text-mocha-muted">Step {wizardStep} of {wizardSteps.length}</span>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Close</button>
               </div>
               <div className="mt-3 flex items-center gap-1.5">
-                {[1, 2, 3, 4, 5].map((s) => (
-                  <span key={s} className={`h-1 flex-1 rounded-full transition-all duration-700 ease ${s <= wizardStep ? "bg-mocha-gold" : "bg-white/10"}`} />
+                {wizardSteps.map((s, i) => (
+                  <span key={s} className={`h-1 flex-1 rounded-full transition-all duration-700 ease ${i + 1 <= wizardStep ? "bg-mocha-gold" : "bg-white/10"}`} />
                 ))}
               </div>
               <div className="quiet-scroll mt-3 max-h-[320px] min-h-[320px] flex-1 space-y-2 overflow-y-auto">
                 <div key={wizardStep} className={wizardStepDir >= 0 ? "welcome-step welcome-from-right" : "welcome-step welcome-from-left"}>
-                {wizardStep === 1 && (
+                {wizardStage === "source" && (
                   <div className="space-y-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Where do you start</div>
                     <button onClick={() => pickWizardSource("local")} className={`block w-full rounded-xl border px-4 py-3 text-left transition-all duration-300 ${wizardSource === "local" ? "border-mocha-gold/40 bg-mocha-gold/10" : "border-white/5 bg-white/[0.02] hover:border-white/10"}`}>
@@ -1406,26 +1411,19 @@ export default function App() {
                     </button>
                   </div>
                 )}
-                {wizardStep === 2 && (
+                {wizardStage === "folder" && (
                   <div className="space-y-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Pick a folder</div>
-                    {wizardSource === "local" ? (
-                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                        <div className="text-sm font-medium">Folder on this PC</div>
-                        <div className="mt-1 text-[13px] text-mocha-muted">You will pick the exact folder with the system dialog when you start sync.</div>
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        <input value={wizardRemotePath} onChange={(e) => setWizardRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
+                        <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{wizardRemoteLoading ? "Loading" : "Load"}</button>
                       </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <div className="flex gap-2">
-                          <input value={wizardRemotePath} onChange={(e) => setWizardRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
-                          <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{wizardRemoteLoading ? "Loading" : "Load"}</button>
-                        </div>
-                        <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteFiles.length === 0 ? "Browse Mocha, then load a path to see files." : `${wizardRemoteFiles.length} files found in Mocha.`}</div>
-                      </div>
-                    )}
+                      <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteFiles.length === 0 ? "Browse Mocha, then load a path to see files." : `${wizardRemoteFiles.length} files found in Mocha.`}</div>
+                    </div>
                   </div>
                 )}
-                {wizardStep === 3 && (
+                {wizardStage === "direction" && (
                   <div className="space-y-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Which way should files go</div>
                     {[
@@ -1434,54 +1432,55 @@ export default function App() {
                       { value: "mirror", title: "Keep both in sync", desc: "Changes on either side sync both ways" },
                     ].map((o) => (
                       <button key={o.value} onClick={() => setWizardDirection(o.value)} className={`block w-full rounded-xl border px-4 py-3 text-left transition-all duration-300 ${wizardDirection === o.value ? "border-mocha-gold/40 bg-mocha-gold/10" : "border-white/5 bg-white/[0.02] hover:border-white/10"}`}>
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="text-sm font-medium">{o.title}</span>
-                          <span className="font-mono text-[11px] text-mocha-muted">{o.value}</span>
-                        </div>
+                        <div className="text-sm font-medium">{o.title}</div>
                         <div className="mt-0.5 text-[13px] text-mocha-muted">{o.desc}</div>
                       </button>
                     ))}
                   </div>
                 )}
-                {wizardStep === 4 && (
+                {wizardStage === "keep" && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Keep on this PC</span>
-                      {wizardSource === "remote" && wizardRemoteFiles.length > 0 && (
+                    </div>
+                    <label className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
+                      <input type="checkbox" checked={wizardKeepLocal} onChange={(e) => setWizardKeepLocal(e.target.checked)} className="h-4 w-4" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm">Keep on this PC</span>
+                        <span className="mt-0.5 block text-[13px] text-mocha-muted">All files in the folder stay here and sync.</span>
+                      </span>
+                    </label>
+                  </div>
+                )}
+                {wizardStage === "files" && (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Keep on this PC</span>
+                      {wizardRemoteFiles.length > 0 && (
                         <button onClick={toggleAllWizardRemote} className="glass-button btn-ghost rounded-full px-3 py-1 text-[11px]">Toggle all</button>
                       )}
                     </div>
-                    {wizardSource === "local" ? (
-                      <label className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3">
-                        <input type="checkbox" checked={wizardKeepLocal} onChange={(e) => setWizardKeepLocal(e.target.checked)} className="h-4 w-4" />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-sm">Keep on this PC</span>
-                          <span className="mt-0.5 block text-[13px] text-mocha-muted">All files in the folder stay here and sync.</span>
-                        </span>
-                      </label>
-                    ) : (
-                      <div className="space-y-1">
-                        {wizardRemoteFiles.map((rf) => (
-                          <label key={rf.rel} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
-                            <input type="checkbox" checked={wizardRemoteChecked.has(rf.rel)} onChange={() => toggleWizardRemoteCheck(rf.rel)} className="h-4 w-4" />
-                            <span className="min-w-0 flex-1 truncate text-sm">{rf.rel}</span>
-                            <span className="shrink-0 font-mono text-[11px] text-mocha-muted">{formatBytes(rf.size)}</span>
-                          </label>
-                        ))}
-                        {wizardRemoteFiles.length === 0 && (
-                          <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-[13px] text-mocha-muted">
-                            No files loaded yet.
-                            <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading || wizardRemotePath.trim().length === 0} className="glass-button btn-ghost ml-2 rounded-full px-3 py-1 text-xs disabled:opacity-50">{wizardRemoteLoading ? "Loading" : "Load now"}</button>
-                          </div>
-                        )}
-                        {wizardRemoteFiles.length > 0 && (
-                          <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteChecked.size} of {wizardRemoteFiles.length} kept on this PC</div>
-                        )}
-                      </div>
-                    )}
+                    <div className="space-y-1">
+                      {wizardRemoteFiles.map((rf) => (
+                        <label key={rf.rel} className="flex items-center gap-3 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-2.5">
+                          <input type="checkbox" checked={wizardRemoteChecked.has(rf.rel)} onChange={() => toggleWizardRemoteCheck(rf.rel)} className="h-4 w-4" />
+                          <span className="min-w-0 flex-1 truncate text-sm">{rf.rel}</span>
+                          <span className="shrink-0 font-mono text-[11px] text-mocha-muted">{formatBytes(rf.size)}</span>
+                        </label>
+                      ))}
+                      {wizardRemoteFiles.length === 0 && (
+                        <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-[13px] text-mocha-muted">
+                          No files loaded yet.
+                          <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading || wizardRemotePath.trim().length === 0} className="glass-button btn-ghost ml-2 rounded-full px-3 py-1 text-xs disabled:opacity-50">{wizardRemoteLoading ? "Loading" : "Load now"}</button>
+                        </div>
+                      )}
+                      {wizardRemoteFiles.length > 0 && (
+                        <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteChecked.size} of {wizardRemoteFiles.length} kept on this PC</div>
+                      )}
+                    </div>
                   </div>
                 )}
-                {wizardStep === 5 && (
+                {wizardStage === "review" && (
                   <div className="space-y-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Review and start</div>
                     <div className="space-y-1 rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-sm">
@@ -1509,10 +1508,10 @@ export default function App() {
               </div>
               <div className="mt-3 flex shrink-0 items-center justify-between gap-2">
                 <button onClick={() => { setWizardStepDir(-1); setWizardStep((s) => Math.max(1, s - 1)); }} disabled={wizardStep === 1 || wizardBusy} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm disabled:opacity-50">Back</button>
-                {wizardStep < 5 ? (
-                  <button onClick={() => { if (wizardStep === 2 && wizardSource === "remote" && wizardRemoteFiles.length === 0) void loadWizardRemote(); setWizardStepDir(1); setWizardStep((s) => Math.min(5, s + 1)); }} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">Continue</button>
+                {wizardStep < wizardSteps.length ? (
+                  <button onClick={() => void (async () => { if (wizardSource === "remote" && wizardStage === "folder" && wizardRemoteFiles.length === 0) await loadWizardRemote(); setWizardStepDir(1); setWizardStep((s) => Math.min(wizardSteps.length, s + 1)); })()} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-mocha-secondary">Continue</button>
                 ) : (
-                  <button onClick={() => void startWizardSync(close)} disabled={wizardBusy || !wizardCanNext()} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:opacity-50">{wizardBusy ? "Starting" : "Start sync"}</button>
+                  <button onClick={() => void startWizardSync(close)} disabled={wizardBusy || !wizardCanNext()} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-mocha-secondary">{wizardBusy ? "Starting" : "Start sync"}</button>
                 )}
               </div>
             </div>
