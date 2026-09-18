@@ -250,7 +250,7 @@ func (a *App) SaveConnection(appURL, apiKey string) error {
 	}
 	a.cfg.AppURL = appURL
 	a.cfg.ApiURL = DefaultAPIURL
-	a.cfg.DeviceID = config.NewDeviceID()
+	a.cfg.DeviceID = config.NewOpaqueID("dev-")
 	if err := config.Save(a.cfg); err != nil {
 		return err
 	}
@@ -598,21 +598,6 @@ func (a *App) GetSyncFolders() []mosync.FolderState {
 	return a.syncMgr.List()
 }
 
-func (a *App) AddSyncFolder() (mosync.FolderState, error) {
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Watch folder", CanCreateDirectories: true})
-	if err != nil {
-		return mosync.FolderState{}, err
-	}
-	if dir == "" {
-		return mosync.FolderState{}, fmt.Errorf("no folder selected")
-	}
-	st, err := a.addSyncRoot(dir)
-	if err == nil {
-		go a.sendHeartbeat()
-	}
-	return st, err
-}
-
 func (a *App) AddSyncFolderLocal(direction string) (mosync.FolderState, error) {
 	if a.syncMgr == nil {
 		return mosync.FolderState{}, fmt.Errorf("sync not ready")
@@ -632,7 +617,7 @@ func (a *App) AddSyncFolderLocal(direction string) (mosync.FolderState, error) {
 		return mosync.FolderState{}, fmt.Errorf("no folder selected")
 	}
 	clean := filepath.Clean(dir)
-	p := config.Pair{ID: config.NewPairID(), LocalPath: clean, RemotePath: "", Direction: config.Direction(direction), PinDefault: "keep"}
+	p := config.Pair{ID: config.NewOpaqueID("pair-"), LocalPath: clean, RemotePath: "", Direction: config.Direction(direction), PinDefault: "keep"}
 	if strings.TrimSpace(p.RemotePath) == "" {
 		p.RemotePath = config.DefaultRemotePath(clean)
 	}
@@ -670,7 +655,7 @@ func (a *App) AddSyncFolderRemote(remotePath string, checked []string, direction
 	clean := filepath.Clean(dir)
 	p := config.Pair{ID: st.PairID, LocalPath: clean, RemotePath: remotePath, Direction: config.Direction(direction), PinDefault: "keep"}
 	if p.ID == "" {
-		p.ID = config.NewPairID()
+		p.ID = config.NewOpaqueID("pair-")
 	}
 	a.rememberPair(p, st)
 	go a.sendHeartbeat()
@@ -749,7 +734,7 @@ func (a *App) rememberPair(p config.Pair, st mosync.FolderState) {
 		id = st.PairID
 	}
 	if id == "" {
-		id = config.NewPairID()
+		id = config.NewOpaqueID("pair-")
 	}
 	exists := false
 	for _, q := range a.cfg.Pairs {

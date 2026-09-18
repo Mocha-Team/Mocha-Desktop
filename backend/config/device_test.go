@@ -15,7 +15,7 @@ func TestEnsureDeviceIDStable(t *testing.T) {
 }
 
 func TestNewDeviceIDUnique(t *testing.T) {
-  if NewDeviceID() == NewDeviceID() {
-    t.Fatalf("ids collide")
-  }
+	if NewOpaqueID("dev-") == NewOpaqueID("dev-") {
+		t.Fatalf("ids collide")
+	}
 }

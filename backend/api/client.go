@@ -551,8 +551,7 @@ type SyncHeartbeatFolder struct {
 }
 
 type heartbeatAnswer struct {
-	Revoked  bool `json:"revoked"`
-	Computer any  `json:"computer"`
+	Revoked bool `json:"revoked"`
 }
 
 func parseHeartbeatBody(raw []byte) (bool, error) {

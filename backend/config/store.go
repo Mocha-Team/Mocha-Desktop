@@ -128,9 +128,9 @@ func MigratePairs(s Store) Store {
 	for _, p := range s.SyncFolders {
 		clean := filepath.Clean(p)
 		s.Pairs = append(s.Pairs, Pair{
-			ID:         newPairID(clean),
+			ID:         NewOpaqueID("pair-"),
 			LocalPath:  clean,
-			RemotePath: migrateRemotePath(clean),
+			RemotePath: DefaultRemotePath(clean),
 			Direction:  Direction("upload-only"),
 			PinDefault: "keep",
 		})
@@ -185,49 +185,37 @@ func ValidatePairs(pairs []Pair) error {
 	return nil
 }
 
-func newPairID(clean string) string {
+func NewOpaqueID(prefix string) string {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err == nil {
-		return "pair-" + hex.EncodeToString(b[:])
+		return prefix + hex.EncodeToString(b[:])
 	}
-	h := sha1.Sum([]byte(clean))
-	return "pair-" + hex.EncodeToString(h[:])[:12]
-}
-
-func NewPairID() string {
-	return newPairID("")
-}
-
-func NewDeviceID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err == nil {
-		return "dev-" + hex.EncodeToString(b[:])
-	}
-	h := sha1.Sum([]byte(time.Now().String()))
-	return "dev-" + hex.EncodeToString(h[:])
+	h := sha1.Sum([]byte(time.Now().String() + prefix))
+	return prefix + hex.EncodeToString(h[:])[:16]
 }
 
 func (s *Store) EnsureDeviceID() string {
 	if strings.TrimSpace(s.DeviceID) == "" {
-		s.DeviceID = NewDeviceID()
+		s.DeviceID = NewOpaqueID("dev-")
 	}
 	return s.DeviceID
 }
 
-func DefaultRemotePath(clean string) string {
-	return migrateRemotePath(clean)
+func SyncStateName(path string) string {
+	h := sha1.Sum([]byte(path))
+	return "sync-" + hex.EncodeToString(h[:])[:16] + ".json"
 }
 
-func migrateRemotePath(clean string) string {
+func DefaultRemotePath(clean string) string {
 	if base := remoteBaseFromState(clean); base != "" {
 		return "/" + strings.Trim(base, "/") + "/"
 	}
 	host, _ := os.Hostname()
-	comp := sanitizeSegment(host, 60)
+	comp := SanitizeSegment(host, 60)
 	if comp == "" {
 		comp = "unknown"
 	}
-	name := sanitizeSegment(filepath.Base(clean), 80)
+	name := SanitizeSegment(filepath.Base(clean), 80)
 	if name == "" {
 		name = "Sync"
 	}
@@ -239,9 +227,7 @@ func remoteBaseFromState(clean string) string {
 	if err != nil {
 		return ""
 	}
-	h := sha1.Sum([]byte(clean))
-	name := "sync-" + hex.EncodeToString(h[:])[:16] + ".json"
-	raw, err := os.ReadFile(filepath.Join(d, name))
+	raw, err := os.ReadFile(filepath.Join(d, SyncStateName(clean)))
 	if err != nil {
 		return ""
 	}
@@ -254,7 +240,7 @@ func remoteBaseFromState(clean string) string {
 	return strings.TrimSpace(ps.RemoteBase)
 }
 
-func sanitizeSegment(value string, maxLen int) string {
+func SanitizeSegment(value string, maxLen int) string {
 	runes := []rune(strings.TrimSpace(value))
 	if len(runes) > maxLen {
 		runes = runes[:maxLen]
@@ -263,6 +249,15 @@ func sanitizeSegment(value string, maxLen int) string {
 	for _, r := range []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"} {
 		cleaned = strings.ReplaceAll(cleaned, r, "-")
 	}
+	var b strings.Builder
+	for _, r := range cleaned {
+		if r < 32 || r == 127 {
+			b.WriteString("-")
+			continue
+		}
+		b.WriteRune(r)
+	}
+	cleaned = strings.Trim(strings.Trim(b.String(), "."), " ")
 	return strings.TrimSpace(cleaned)
 }
 

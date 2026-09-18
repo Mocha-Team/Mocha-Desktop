@@ -2,9 +2,6 @@ package sync
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha1"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -91,14 +88,6 @@ type rootJob struct {
 	remoteBackoffUntil   time.Time
 }
 
-func newOpaquePairID() string {
-	var b [8]byte
-	if _, err := rand.Read(b[:]); err == nil {
-		return "pair-" + hex.EncodeToString(b[:])
-	}
-	return transfers.NewJobID("pair-")
-}
-
 func pinsFile(stateDir string) string {
 	return filepath.Join(stateDir, "pins.json")
 }
@@ -124,11 +113,7 @@ func savePinsFile(stateDir string, pins map[string]map[string]string) {
 		return
 	}
 	raw, _ := json.Marshal(pins)
-	tmp := pinsFile(stateDir) + ".mocha-tmp"
-	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
-		return
-	}
-	_ = os.Rename(tmp, pinsFile(stateDir))
+	writeFileAtomic(pinsFile(stateDir), raw)
 }
 
 func (m *Manager) persistPins() {
@@ -199,7 +184,7 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 	}
 	job.pairID = p.ID
 	if job.pairID == "" {
-		job.pairID = newOpaquePairID()
+		job.pairID = config.NewOpaqueID("pair-")
 	}
 	job.direction = direction
 	if remoteBase != "" {
@@ -252,7 +237,7 @@ func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked 
 		return FolderState{}, fmt.Errorf("folder not empty")
 	}
 	p := config.Pair{
-		ID:         newOpaquePairID(),
+		ID:         config.NewOpaqueID("pair-"),
 		LocalPath:  clean,
 		RemotePath: "/" + base + "/",
 		Direction:  config.Direction(direction),
@@ -590,11 +575,6 @@ func (m *Manager) CancelJob(jobID string) bool {
 	return false
 }
 
-func stateName(path string) string {
-	h := sha1.Sum([]byte(path))
-	return "sync-" + hex.EncodeToString(h[:])[:16] + ".json"
-}
-
 func inside(path, root string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
@@ -624,7 +604,7 @@ func (m *Manager) Add(path string) (FolderState, error) {
 			return FolderState{}, fmt.Errorf("folder overlaps an existing watched folder")
 		}
 	}
-	stateFile := filepath.Join(m.stateDir, stateName(clean))
+	stateFile := filepath.Join(m.stateDir, config.SyncStateName(clean))
 	ignores := mergeIgnores(DefaultIgnores, m.globalIgnores)
 	w, err := NewWithIgnores(clean, ignores)
 	if err != nil {
@@ -638,7 +618,7 @@ func (m *Manager) Add(path string) (FolderState, error) {
 		base = m.uniqueRemoteBase(remoteBaseForFolder(clean, localComputerSegment()))
 	}
 	FilterSnapshot(snap, ignores)
-	pairID := newOpaquePairID()
+	pairID := config.NewOpaqueID("pair-")
 	job := &rootJob{
 		path:         clean,
 		remoteBase:   base,
@@ -1445,33 +1425,12 @@ const SyncRootSegment = "Computers"
 const maxComputerSegmentLen = 60
 const maxFolderSegmentLen = 80
 
-func sanitizePathSegment(value string, maxLen int) string {
-	runes := []rune(strings.TrimSpace(value))
-	if len(runes) > maxLen {
-		runes = runes[:maxLen]
-	}
-	cleaned := strings.Trim(strings.Trim(string(runes), "."), " ")
-	for _, r := range []string{"/", "\\", ":", "*", "?", "\"", "<", ">", "|"} {
-		cleaned = strings.ReplaceAll(cleaned, r, "-")
-	}
-	var b strings.Builder
-	for _, r := range cleaned {
-		if r < 32 || r == 127 {
-			b.WriteString("-")
-			continue
-		}
-		b.WriteRune(r)
-	}
-	cleaned = strings.Trim(strings.Trim(b.String(), "."), " ")
-	return strings.TrimSpace(cleaned)
-}
-
 func localComputerSegment() string {
 	host, err := os.Hostname()
 	if err != nil {
 		host = ""
 	}
-	seg := sanitizePathSegment(host, maxComputerSegmentLen)
+	seg := config.SanitizeSegment(host, maxComputerSegmentLen)
 	if seg == "" || seg == "." || seg == ".." {
 		return "unknown"
 	}
@@ -1479,11 +1438,11 @@ func localComputerSegment() string {
 }
 
 func remoteBaseForFolder(localPath, computer string) string {
-	base := sanitizePathSegment(filepath.Base(localPath), maxFolderSegmentLen)
+	base := config.SanitizeSegment(filepath.Base(localPath), maxFolderSegmentLen)
 	if base == "" || base == "." || base == ".." {
 		base = "Sync"
 	}
-	comp := sanitizePathSegment(computer, maxComputerSegmentLen)
+	comp := config.SanitizeSegment(computer, maxComputerSegmentLen)
 	if comp == "" || comp == "." || comp == ".." {
 		comp = "unknown"
 	}

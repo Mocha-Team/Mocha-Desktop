@@ -121,13 +121,6 @@ export interface SyncFolder {
   paused?: boolean;
 }
 
-export interface SyncPair {
-  pairId: string;
-  path: string;
-  remotePath: string;
-  direction: string;
-}
-
 export interface PairFile {
   rel: string;
   pin: string;
@@ -325,7 +318,6 @@ export const api = {
   supportsContextMenu: () => invoke<boolean>("SupportsContextMenu"),
   supportsLaunchAtStartup: () => invoke<boolean>("SupportsLaunchAtStartup"),
   syncFolders: () => invoke<SyncFolder[]>("GetSyncFolders"),
-  addSyncFolder: () => invoke<SyncFolder>("AddSyncFolder"),
   addSyncFolderLocal: (direction?: string) => invoke<SyncFolder>("AddSyncFolderLocal", direction ?? "upload-only"),
   listRemoteForAttach: (remotePath: string) => invoke<RemotePickFile[]>("ListRemoteForAttach", remotePath),
   addSyncFolderRemote: (remotePath: string, checked: string[], direction?: string) => invoke<SyncFolder>("AddSyncFolderRemote", remotePath, checked, direction ?? "mirror"),

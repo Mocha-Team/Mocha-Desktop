@@ -136,12 +136,8 @@ type persistedSyncState struct {
 	Files      Snapshot `json:"files"`
 }
 
-func SaveSyncState(stateFile string, s Snapshot, remoteBase string) {
-	if s == nil {
-		s = Snapshot{}
-	}
-	raw, _ := json.MarshalIndent(persistedSyncState{RemoteBase: remoteBase, Files: s}, "", "  ")
-	tmp := stateFile + ".mocha-tmp"
+func writeFileAtomic(path string, raw []byte) {
+	tmp := path + ".mocha-tmp"
 	if err := os.WriteFile(tmp, raw, 0o600); err != nil {
 		return
 	}
@@ -149,7 +145,15 @@ func SaveSyncState(stateFile string, s Snapshot, remoteBase string) {
 		_ = f.Sync()
 		_ = f.Close()
 	}
-	_ = os.Rename(tmp, stateFile)
+	_ = os.Rename(tmp, path)
+}
+
+func SaveSyncState(stateFile string, s Snapshot, remoteBase string) {
+	if s == nil {
+		s = Snapshot{}
+	}
+	raw, _ := json.MarshalIndent(persistedSyncState{RemoteBase: remoteBase, Files: s}, "", "  ")
+	writeFileAtomic(stateFile, raw)
 	if d, err := os.Open(filepath.Dir(stateFile)); err == nil {
 		_ = d.Sync()
 		_ = d.Close()
@@ -190,22 +194,6 @@ func ScanWithIgnores(root string, patterns []string) (Snapshot, error) {
 		return nil
 	})
 	return s, err
-}
-
-func Diff(old, next Snapshot) (added, modified []string) {
-	added = []string{}
-	modified = []string{}
-	for k, v := range next {
-		o, ok := old[k]
-		if !ok {
-			added = append(added, k)
-			continue
-		}
-		if o.Size != v.Size || o.ModTime != v.ModTime {
-			modified = append(modified, k)
-		}
-	}
-	return added, modified
 }
 
 func DiffWithHash(old, next Snapshot) (added, modified []string) {
