@@ -231,6 +231,14 @@ body,
     will-change: transform, opacity, filter;
     animation: mocha-notice 520ms var(--spring-smooth) both;
   }
+  .toast-in {
+    will-change: transform, opacity, filter;
+    animation: toast-in 420ms var(--spring-smooth) both;
+  }
+  .toast-out {
+    will-change: transform, opacity, filter;
+    animation: toast-out 220ms var(--ease-fluid) both;
+  }
   .card-hover {
     transition: transform 320ms var(--ease-fluid), border-color 320ms var(--ease-fluid), background-color 320ms var(--ease-fluid), box-shadow 320ms var(--ease-fluid);
   }
@@ -305,6 +313,15 @@ body,
   @keyframes thumb-in {
     from { opacity: 0; transform: scale(0.98); filter: blur(8px); }
     to { opacity: 1; transform: scale(1); filter: blur(0); }
+  }
+  @keyframes toast-in {
+    from { opacity: 0; transform: translateY(14px) scale(0.97); filter: blur(8px); }
+    60% { opacity: 1; filter: blur(0); }
+    to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+  }
+  @keyframes toast-out {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to { opacity: 0; transform: translateY(6px) scale(0.97); filter: blur(4px); }
   }
   @keyframes mocha-shimmer {
     from { transform: translateX(-100%); }
@@ -520,6 +537,7 @@ body,
   .notice-in,
   .empty-in,
   .nav-enter,
+  .toast-in,
   .thumb-fade,
   .glow-drift,
   .loader-float,
@@ -535,7 +553,8 @@ body,
     animation-duration: 2.2s;
   }
   .preview-overlay.is-closing,
-  .preview-shell.is-closing {
+  .preview-shell.is-closing,
+  .toast-out {
     animation: mocha-fade-out 200ms var(--ease-fluid) both;
   }
 }

@@ -6,7 +6,6 @@ interface WelcomeProps {
   apiKey: string;
   onApiKey: (v: string) => void;
   busy: boolean;
-  notice: string | null;
   onConnect: (e: React.FormEvent) => void;
 }
 
@@ -19,7 +18,7 @@ function StepArrow({ flip = false }: { flip?: boolean }) {
   );
 }
 
-export function Welcome({ apiKey, onApiKey, busy, notice, onConnect }: WelcomeProps) {
+export function Welcome({ apiKey, onApiKey, busy, onConnect }: WelcomeProps) {
   const [step, setStep] = useState(0);
   const [dir, setDir] = useState(1);
   const [showKey, setShowKey] = useState(false);
@@ -176,12 +175,6 @@ export function Welcome({ apiKey, onApiKey, busy, notice, onConnect }: WelcomePr
                 </div>
               )}
             </div>
-
-            {notice && (
-              <div className="welcome-error mt-4 rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm text-mocha-secondary">
-                {notice}
-              </div>
-            )}
 
             <div className="mt-7 flex shrink-0 items-center justify-between gap-3">
               <button

@@ -14,8 +14,11 @@ import { ShareModal } from "./components/ShareModal";
 import { Startup } from "./components/Startup";
 import { Welcome } from "./components/Welcome";
 import { UpdateBanner } from "./components/UpdateBanner";
+import { ToastStack, type Notice, type NoticeTone } from "./components/Toasts";
 
 type Tab = "files" | "shares" | "sync" | "activity" | "trash" | "settings";
+
+let noticeSeq = 0;
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -51,7 +54,19 @@ export default function App() {
   const [conflicts, setConflicts] = useState<Record<string, SyncConflict[]>>({});
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notices, setNotices] = useState<Notice[]>([]);
+
+  const notify = useCallback((text: string, tone: NoticeTone = "info") => {
+    const id = ++noticeSeq;
+    setNotices((list) => [...list, { id, text, tone }].slice(-3));
+  }, []);
+
+  const fail = useCallback((e: unknown, fallback: string) => {
+    notify(e instanceof Error ? e.message : fallback, "error");
+  }, [notify]);
+
+  const dismissNotice = useCallback((id: number) => setNotices((list) => list.filter((n) => n.id !== id)), []);
+
   const [updateInfo, setUpdateInfo] = useState<UpdateCheck | null>(null);
   const [updateProgress, setUpdateProgress] = useState<number | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
@@ -175,11 +190,11 @@ export default function App() {
         if (filesReq.current !== req) return;
         const msg = err instanceof Error ? err.message : "File listing failed";
         setFilesError(msg);
-        setNotice(msg);
+        notify(msg, "error");
       }
     } catch (e) {
       if (filesReq.current !== req) return;
-      setNotice(e instanceof Error ? e.message : "Refresh failed");
+      fail(e, "Refresh failed");
     } finally {
       if (filesReq.current === req) setFilesLoading(false);
     }
@@ -197,7 +212,7 @@ export default function App() {
       setHasMore(!!list.hasMore);
     } catch (err) {
       if (filesReq.current !== req) return;
-      setNotice(err instanceof Error ? err.message : "Load more failed");
+      fail(err, "Load more failed");
     } finally {
       if (filesReq.current === req) setLoadingMore(false);
     }
@@ -208,7 +223,7 @@ export default function App() {
     try {
       setTrash(await api.trash());
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Trash failed");
+      fail(err, "Trash failed");
     } finally {
       setTrashLoading(false);
     }
@@ -232,11 +247,11 @@ export default function App() {
         setUpdateInfo(res);
         setUpdateProgress(null);
       } else {
-        setNotice("Mocha is up to date");
+        notify("Mocha is up to date");
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Update check failed";
-      setNotice(msg.includes("no update for") ? "Updates are not available for this platform" : msg);
+        notify(msg.includes("no update for") ? "Updates are not available for this platform" : msg, "error");
     }
   }
 
@@ -249,7 +264,7 @@ export default function App() {
       setUpdateInfo(null);
       setUpdateProgress(null);
       setUpdateBusy(false);
-      setNotice(typeof dest === "string" && dest ? `Update ready: ${dest}` : "Update applied, restart to finish");
+      notify(typeof dest === "string" && dest ? `Update ready: ${dest}` : "Update applied, restart to finish");
     } catch (err) {
       setUpdateError(err instanceof Error ? err.message : "Update failed");
       setUpdateBusy(false);
@@ -307,7 +322,7 @@ export default function App() {
     });
     EventsOn("auth:revoked", () => {
       void refreshStatus();
-      setNotice("This computer was signed out from the web");
+      notify("This computer was signed out from the web", "error");
     });
     EventsOn("tray:flyout", () => {
       setView("flyout");
@@ -332,18 +347,12 @@ export default function App() {
       setUpdateInfo(null);
       setUpdateProgress(null);
       setUpdateBusy(false);
-      setNotice(p?.path ? `Update ready: ${p.path}` : "Update applied, restart to finish");
+      notify(p?.path ? `Update ready: ${p.path}` : "Update applied, restart to finish");
     });
     return () => {
       for (const e of ["upload:progress", "download:progress", "sync:status", "auth:revoked", "tray:flyout", "tray:full", "update:available", "update:progress", "update:error", "update:applied"]) EventsOff(e);
     };
   }, [refreshStatus, refreshSync]);
-
-  useEffect(() => {
-    if (!notice) return;
-    const t = setTimeout(() => setNotice(null), 4200);
-    return () => clearTimeout(t);
-  }, [notice]);
 
   useRevealRoot([tab, files.length, status?.configured]);
 
@@ -362,9 +371,9 @@ export default function App() {
       const s = await refreshStatus();
       setStatus(s);
       await refreshData();
-      setNotice("Connected to Mocha");
+      notify("Connected to Mocha", "success");
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Connection failed");
+      fail(err, "Connection failed");
     } finally {
       setBusy(false);
     }
@@ -376,10 +385,10 @@ export default function App() {
     try {
       const jobs = await api.pickUpload(path);
       if (Array.isArray(jobs) && jobs.length > 1) {
-        setNotice(`Uploaded ${jobs.length} files in parallel`);
+        notify(`Uploaded ${jobs.length} files in parallel`, "success");
       }
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Upload failed");
+      fail(err, "Upload failed");
     } finally {
       setUploading(false);
       await refreshData();
@@ -391,7 +400,7 @@ export default function App() {
       await api.remove(id);
       await refreshData();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Delete failed");
+      fail(err, "Delete failed");
     }
   }
 
@@ -446,16 +455,16 @@ export default function App() {
   async function downloadFile(file: FileItem) {
     try {
       await api.download(file.id, file.original_name);
-      setNotice("Saved " + file.original_name);
+      notify("Saved " + file.original_name, "success");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Download failed";
       if (msg.startsWith("exists:")) {
         const dest = msg.slice("exists:".length);
         setOverwrite({ file, dest, size: 0 });
-        setNotice("File exists - confirm overwrite");
+        notify("File exists - confirm overwrite");
         return;
       }
-      setNotice(msg);
+      notify(msg, "error");
     }
   }
 
@@ -463,9 +472,9 @@ export default function App() {
     if (!overwrite) return;
     try {
       await api.downloadToPath(overwrite.file.id, overwrite.dest, true);
-      setNotice("Saved " + overwrite.file.original_name);
+      notify("Saved " + overwrite.file.original_name, "success");
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Download failed");
+      fail(e, "Download failed");
     } finally {
       close();
     }
@@ -474,9 +483,9 @@ export default function App() {
   async function cancelTransfer(jobId: string) {
     try {
       await api.cancelTransfer(jobId);
-      setNotice("Transfer cancelled");
+      notify("Transfer cancelled");
     } catch (e) {
-      setNotice(e instanceof Error ? e.message : "Cancel failed");
+      fail(e, "Cancel failed");
     }
   }
 
@@ -484,7 +493,7 @@ export default function App() {
     if (!modal || modalBusy) return;
     const value = modalValue.trim();
     if (!value) {
-      setNotice("Name required");
+      notify("Name required");
       return;
     }
     setModalBusy(true);
@@ -497,7 +506,7 @@ export default function App() {
       close();
       await refreshData();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Operation failed");
+      fail(err, "Operation failed");
     } finally {
       setModalBusy(false);
     }
@@ -518,7 +527,7 @@ export default function App() {
     try {
       setArchiveEntries(await api.listArchive(file.id));
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Archive unavailable");
+      fail(err, "Archive unavailable");
     } finally {
       setArchiveLoading(false);
     }
@@ -527,14 +536,14 @@ export default function App() {
   async function bulkDownload() {
     const ids = [...selectedIds];
     if (ids.length === 0) {
-      setNotice("Select files first");
+      notify("Select files first");
       return;
     }
     try {
       const dest = await api.bulkDownload(ids, []);
-      setNotice("Saved " + dest);
+      notify("Saved " + dest, "success");
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Bulk download failed");
+      fail(err, "Bulk download failed");
     }
   }
 
@@ -552,7 +561,7 @@ export default function App() {
       await api.setSyncPaused(folderPath, !paused);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Pause failed");
+      fail(err, "Pause failed");
     }
   }
 
@@ -561,7 +570,7 @@ export default function App() {
       await api.rescanPair(pairId);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Sync failed");
+      fail(err, "Sync failed");
     }
   }
 
@@ -570,7 +579,7 @@ export default function App() {
       await api.clearSyncError(pairId);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Clear failed");
+      fail(err, "Clear failed");
     }
   }
 
@@ -591,9 +600,9 @@ export default function App() {
       const patterns = parseLines(ignoreDraft);
       await api.saveFolderIgnores(ignoreEditor, patterns);
       close();
-      setNotice("Ignore rules saved");
+      notify("Ignore rules saved", "success");
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Save failed");
+      fail(err, "Save failed");
     } finally {
       setIgnoreBusy(false);
     }
@@ -606,7 +615,7 @@ export default function App() {
       setSettings(next);
       return true;
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Save failed");
+      fail(err, "Save failed");
       return false;
     } finally {
       setSettingsBusy(false);
@@ -625,7 +634,7 @@ export default function App() {
       ...(settings || {}),
       globalIgnores: parseLines(settingsDraft),
     };
-    if (await persistSettings(next)) setNotice("Settings saved");
+      if (await persistSettings(next)) notify("Settings saved", "success");
   }
 
   function wizardDirectionLabel(v: string): string {
@@ -670,7 +679,7 @@ export default function App() {
       await api.setPairDirection(pairId, direction);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Direction failed");
+      fail(err, "Direction failed");
     }
   }
 
@@ -703,7 +712,7 @@ export default function App() {
       const m = await api.getFilePins(pairId);
       setPins((p) => ({ ...p, [pairId]: m || {} }));
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Pin failed");
+      fail(err, "Pin failed");
     }
   }
 
@@ -712,7 +721,7 @@ export default function App() {
       const list = await api.listConflicts(pairId);
       setConflicts((c) => ({ ...c, [pairId]: list || [] }));
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Conflicts failed");
+      fail(err, "Conflicts failed");
     }
   }
 
@@ -722,7 +731,7 @@ export default function App() {
       const list = await api.listConflicts(pairId);
       setConflicts((c) => ({ ...c, [pairId]: list || [] }));
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Resolve failed");
+      fail(err, "Resolve failed");
     }
   }
 
@@ -734,7 +743,7 @@ export default function App() {
       setWizardRemoteFiles(list || []);
       setWizardRemoteChecked(new Set((list || []).map((r) => r.rel)));
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Remote list failed");
+      fail(err, "Remote list failed");
     } finally {
       setWizardRemoteLoading(false);
     }
@@ -768,7 +777,7 @@ export default function App() {
   async function startWizardSync(close: () => void) {
     if (wizardBusy) return;
     if (wizardSource === "remote" && wizardRemoteChecked.size === 0) {
-      setNotice("Pick at least one file to keep");
+      notify("Pick at least one file to keep");
       return;
     }
     setWizardBusy(true);
@@ -788,7 +797,7 @@ export default function App() {
       setStatus(s);
       await refreshSync();
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not start sync");
+      fail(err, "Could not start sync");
     } finally {
       setWizardBusy(false);
     }
@@ -810,7 +819,7 @@ export default function App() {
       }
       setRemovePreview({ path: folderPath, preview });
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not preview files");
+      fail(err, "Could not preview files");
     } finally {
       setPreviewLoading(false);
     }
@@ -834,7 +843,7 @@ export default function App() {
       if (result.skipped > 0) parts.push(`${result.skipped} not matched, delete manually`);
       await finishRemoveFolder(folderPath, `Stopped sync (${parts.join(", ")})`);
     } catch (err) {
-      setNotice(err instanceof Error ? err.message : "Could not remove folder");
+      fail(err, "Could not remove folder");
     } finally {
       setRemoving(false);
     }
@@ -849,9 +858,9 @@ export default function App() {
         } catch {
           await api.removeSyncFolder(folderPath);
         }
-        setNotice("Stopped sync, uploaded files kept");
+        notify("Stopped sync, uploaded files kept");
       } catch (err) {
-        setNotice(err instanceof Error ? err.message : "Could not remove folder");
+        fail(err, "Could not remove folder");
         return;
       } finally {
         setRemoving(false);
@@ -911,10 +920,10 @@ export default function App() {
             apiKey={apiKey}
             onApiKey={setApiKey}
             busy={busy}
-            notice={notice}
             onConnect={connect}
           />
         </main>
+        <ToastStack notices={notices} onDismiss={dismissNotice} />
       </div>
     );
   }
@@ -1015,8 +1024,6 @@ export default function App() {
             onDismiss={() => setUpdateInfo(null)}
           />
         )}
-        {notice && tab !== "files" && <div className="notice-in mt-4 shrink-0 rounded-2xl border border-mocha-gold/20 bg-mocha-gold/10 px-4 py-2.5 text-[13px] text-mocha-goldbright">{notice}</div>}
-
         {tab === "files" && (
           <div key={tab + path} className="tab-panel-in flex min-h-0 flex-1 flex-col overflow-hidden">
             <FilesTab
@@ -1062,7 +1069,7 @@ export default function App() {
                      <div className="truncate text-sm font-medium">{s.original_name || s.folder_path || "Folder share"}</div>
                      <div className="mt-1 font-mono text-[11px] text-mocha-muted">/{s.token} {"·"} {s.download_count} downloads {"·"} {s.password_protected ? "locked" : "open"}</div>
                    </div>
-                  <button onClick={() => { void copyText(`https://mocha.my/share/${s.token}`).then((ok) => setNotice(ok ? "Link copied" : s.token)); }} className="glass-button btn-ghost rounded-full px-4 py-2 text-xs">Copy</button>
+                  <button onClick={() => { void copyText(`https://mocha.my/share/${s.token}`).then((ok) => notify(ok ? "Link copied" : s.token, ok ? "success" : "info")); }} className="glass-button btn-ghost rounded-full px-4 py-2 text-xs">Copy</button>
                   <button onClick={() => api.deleteShare(s.token).then(() => refreshData())} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">Revoke</button>
                 </div>
               ))}
@@ -1217,7 +1224,7 @@ export default function App() {
               <div className="rise-in flex shrink-0 items-center justify-between px-3 pb-2 pt-2">
                 <span className="text-[13px] text-mocha-secondary">{trash.length === 0 ? "Trash is empty" : `${trash.length} deleted file${trash.length === 1 ? "" : "s"}`}</span>
                 {trash.length > 0 && (
-                  <button onClick={() => api.clearTrash().then(() => refreshTrash()).catch((e) => setNotice(e instanceof Error ? e.message : "Empty failed"))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">Empty trash</button>
+                  <button onClick={() => api.clearTrash().then(() => refreshTrash()).catch((e) => fail(e, "Empty failed"))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">Empty trash</button>
                 )}
               </div>
               {trashLoading && <div className="flex flex-col gap-2 px-2 py-2"><div className="skeleton-shimmer h-14 rounded-xl" /><div className="skeleton-shimmer h-14 rounded-xl" style={{ animationDelay: "120ms" }} /></div>}
@@ -1227,7 +1234,7 @@ export default function App() {
                     <div className="truncate text-sm font-medium">{t.original_name}</div>
                     <div className="mt-1 font-mono text-[11px] text-mocha-muted">{formatBytes(t.size)} {"·"} {t.path} {"·"} {t.deleted_at ? formatDate(t.deleted_at) : ""}</div>
                   </div>
-                  <button onClick={() => api.deleteTrashItem(t.id).then(() => refreshTrash()).catch((e) => setNotice(e instanceof Error ? e.message : "Delete failed"))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">Delete</button>
+                  <button onClick={() => api.deleteTrashItem(t.id).then(() => refreshTrash()).catch((e) => fail(e, "Delete failed"))} className="glass-button rounded-full border border-red-400/20 bg-red-400/10 px-4 py-2 text-xs text-red-200">Delete</button>
                 </div>
               ))}
               {trash.length === 0 && !trashLoading && (
@@ -1335,7 +1342,7 @@ export default function App() {
                       <div className="font-mono text-[11px] text-mocha-muted">{en.isDirectory ? "folder" : formatBytes(en.fileSize)}</div>
                     </div>
                     {!en.isDirectory && (
-                      <button onClick={() => api.extractArchive(archiveFile.id, en.path, en.fileName).then((d) => setNotice("Extracted " + d)).catch((e) => setNotice(e instanceof Error ? e.message : "Extract failed"))} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Save</button>
+                      <button onClick={() => api.extractArchive(archiveFile.id, en.path, en.fileName).then((d) => notify("Extracted " + d, "success")).catch((e) => fail(e, "Extract failed"))} className="glass-button btn-ghost rounded-full px-3 py-1.5 text-xs">Save</button>
                     )}
                   </div>
                 ))}
@@ -1534,6 +1541,8 @@ export default function App() {
           onDownload={() => void downloadFile(previewFile)}
         />
       )}
+
+      <ToastStack notices={notices} onDismiss={dismissNotice} />
     </div>
   );
 }
