@@ -277,6 +277,15 @@ export default function App() {
     void refreshStatus().finally(() => {
       timer = window.setTimeout(() => setBooted(true), Math.max(0, 2400 - (Date.now() - started)));
     });
+    api.checkForUpdates()
+      .then((res) => {
+        if (res?.available) {
+          setUpdateInfo(res);
+          setUpdateProgress(null);
+          setUpdateError(null);
+        }
+      })
+      .catch(() => undefined);
     api.supportsContextMenu().then(setMenuSupported).catch(() => setMenuSupported(false));
     api.supportsLaunchAtStartup().then(setStartupSupported).catch(() => setStartupSupported(false));
     return () => window.clearTimeout(timer);
@@ -331,11 +340,6 @@ export default function App() {
     EventsOn("tray:full", () => {
       setView("full");
     });
-    EventsOn("update:available", (res: UpdateCheck) => {
-      setUpdateInfo(res);
-      setUpdateProgress(null);
-      setUpdateError(null);
-    });
     EventsOn("update:progress", (p: { loaded: number; total: number }) => {
       if (p.total > 0) setUpdateProgress(Math.round((p.loaded / p.total) * 100));
     });
@@ -350,7 +354,7 @@ export default function App() {
       notify(p?.path ? `Update ready: ${p.path}` : "Update applied, restart to finish");
     });
     return () => {
-      for (const e of ["upload:progress", "download:progress", "sync:status", "auth:revoked", "tray:flyout", "tray:full", "update:available", "update:progress", "update:error", "update:applied"]) EventsOff(e);
+      for (const e of ["upload:progress", "download:progress", "sync:status", "auth:revoked", "tray:flyout", "tray:full", "update:progress", "update:error", "update:applied"]) EventsOff(e);
     };
   }, [refreshStatus, refreshSync]);
 

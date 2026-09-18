@@ -141,7 +141,6 @@ func (a *App) startup(ctx context.Context) {
 	}
 	go a.startTray()
 	go a.heartbeatLoop()
-	go a.autoUpdateCheck()
 }
 
 func appVersion() string {
@@ -160,18 +159,6 @@ func (a *App) heartbeatLoop() {
 	for range ticker.C {
 		a.sendHeartbeat()
 	}
-}
-
-func (a *App) autoUpdateCheck() {
-	time.Sleep(15 * time.Second)
-	if a.ctx == nil {
-		return
-	}
-	res, err := a.CheckForUpdates()
-	if err != nil || !res.Available {
-		return
-	}
-	a.emit("update:available", res)
 }
 
 func (a *App) sendHeartbeat() {
