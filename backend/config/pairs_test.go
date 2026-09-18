@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestMigratePairsKeepsRemoteBase(t *testing.T) {
 	s := Store{SyncFolders: []string{`C:\pics`}}
@@ -55,5 +59,23 @@ func TestValidatePairRejectsBadDirection(t *testing.T) {
 	p := Pair{ID: "a", LocalPath: `C:\pics`, RemotePath: "/Photos/", Direction: Direction("sideways")}
 	if ValidatePair(p) == nil {
 		t.Fatalf("bad direction should fail")
+	}
+}
+
+func TestDefaultRemotePathForMirrorLocal(t *testing.T) {
+	local := filepath.Join(t.TempDir(), "pics")
+	p := Pair{ID: "a", LocalPath: local, Direction: Direction("mirror")}
+	if ValidatePair(p) == nil {
+		t.Fatalf("empty remote should fail for mirror")
+	}
+	p.RemotePath = DefaultRemotePath(local)
+	if err := ValidatePair(p); err != nil {
+		t.Fatalf("defaulted should validate: %v", err)
+	}
+	if !strings.HasPrefix(p.RemotePath, "/Computers/") {
+		t.Fatalf("remote = %s", p.RemotePath)
+	}
+	if !strings.HasSuffix(p.RemotePath, "/") {
+		t.Fatalf("remote = %s", p.RemotePath)
 	}
 }

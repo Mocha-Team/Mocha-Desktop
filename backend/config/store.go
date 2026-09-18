@@ -194,6 +194,10 @@ func NewPairID() string {
 	return newPairID("")
 }
 
+func DefaultRemotePath(clean string) string {
+	return migrateRemotePath(clean)
+}
+
 func migrateRemotePath(clean string) string {
 	if base := remoteBaseFromState(clean); base != "" {
 		return "/" + strings.Trim(base, "/") + "/"

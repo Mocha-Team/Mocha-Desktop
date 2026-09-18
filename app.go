@@ -614,6 +614,9 @@ func (a *App) AddSyncFolderLocal(direction string) (mosync.FolderState, error) {
 	}
 	clean := filepath.Clean(dir)
 	p := config.Pair{ID: config.NewPairID(), LocalPath: clean, RemotePath: "", Direction: config.Direction(direction), PinDefault: "keep"}
+	if strings.TrimSpace(p.RemotePath) == "" {
+		p.RemotePath = config.DefaultRemotePath(clean)
+	}
 	st, err := a.syncMgr.AddWithPair(p)
 	if err != nil {
 		return st, err
