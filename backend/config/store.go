@@ -16,7 +16,6 @@ type Settings struct {
 	PauseMode          string   `json:"pauseMode,omitempty"`
 	GlobalIgnores      []string `json:"globalIgnores,omitempty"`
 	ConflictPolicy     string   `json:"conflictPolicy,omitempty"`
-	BidirectionalSync  bool     `json:"bidirectionalSync,omitempty"`
 	FilesView          string   `json:"filesView,omitempty"`
 	ContextMenuEnabled bool     `json:"contextMenu,omitempty"`
 	LaunchAtStartup    bool     `json:"launchAtStartup,omitempty"`

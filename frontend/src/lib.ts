@@ -54,7 +54,6 @@ export interface AppSettings {
   pauseMode?: string;
   globalIgnores?: string[];
   conflictPolicy?: string;
-  bidirectionalSync?: boolean;
   filesView?: string;
   contextMenu?: boolean;
   launchAtStartup?: boolean;

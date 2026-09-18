@@ -121,7 +121,7 @@ func (a *App) startup(ctx context.Context) {
 	a.syncMgr.SetClient(a.client)
 	a.syncMgr.SetPauseMode(a.cfg.Settings.PauseMode)
 	a.syncMgr.SetGlobalIgnores(a.cfg.Settings.GlobalIgnores)
-	a.syncMgr.SetBidirectional(a.cfg.Settings.BidirectionalSync, a.cfg.Settings.ConflictPolicy)
+	a.syncMgr.SetConflictPolicy(a.cfg.Settings.ConflictPolicy)
 	if len(a.cfg.Pairs) > 0 {
 		for _, p := range a.cfg.Pairs {
 			_, _ = a.syncMgr.AddWithPair(p)
@@ -1038,7 +1038,7 @@ func (a *App) applySyncSettings() {
 	}
 	a.syncMgr.SetPauseMode(a.cfg.Settings.PauseMode)
 	a.syncMgr.SetGlobalIgnores(a.cfg.Settings.GlobalIgnores)
-	a.syncMgr.SetBidirectional(a.cfg.Settings.BidirectionalSync, a.cfg.Settings.ConflictPolicy)
+	a.syncMgr.SetConflictPolicy(a.cfg.Settings.ConflictPolicy)
 	for p, fs := range a.cfg.FolderSettings {
 		clean := filepath.Clean(p)
 		a.syncMgr.SetFolderIgnores(clean, fs.Ignores)

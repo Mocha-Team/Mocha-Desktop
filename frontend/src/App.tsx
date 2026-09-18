@@ -1251,14 +1251,6 @@ export default function App() {
               </div>
               <div className="rise-in" style={{ animationDelay: "110ms" }}>
               <SettingRow
-                title="Bidirectional sync"
-                desc="Download remote changes. Size-based compare, same-size edits may not download."
-                checked={!!settings?.bidirectionalSync}
-                onChange={(v) => updateSettings({ bidirectionalSync: v })}
-              />
-              </div>
-              <div className="rise-in" style={{ animationDelay: "160ms" }}>
-              <SettingRow
                 title="Remote wins conflicts"
                 desc="On: download overwrites local. Off: skip on conflict."
                 checked={settings?.conflictPolicy === "remote-wins"}

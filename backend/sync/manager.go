@@ -54,7 +54,6 @@ type Manager struct {
 	stateDir       string
 	pauseMode      string
 	globalIgnores  []string
-	bidirectional  bool
 	conflictPolicy string
 	conflicts      map[string][]Conflict
 	pins           map[string]map[string]string
@@ -465,7 +464,7 @@ func (m *Manager) SetGlobalIgnores(patterns []string) {
 	m.mu.Unlock()
 }
 
-func (m *Manager) SetBidirectional(on bool, policy string) {
+func (m *Manager) SetConflictPolicy(policy string) {
 	policy = strings.TrimSpace(strings.ToLower(policy))
 	if policy == "local-wins" {
 		policy = "remote-wins"
@@ -474,7 +473,6 @@ func (m *Manager) SetBidirectional(on bool, policy string) {
 		policy = "skip"
 	}
 	m.mu.Lock()
-	m.bidirectional = on
 	m.conflictPolicy = policy
 	m.mu.Unlock()
 }
@@ -1305,7 +1303,6 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 func (m *Manager) maybePullRemote(job *rootJob) {
 	m.mu.Lock()
 	_, ok := m.roots[job.path]
-	bi := m.bidirectional
 	policy := m.conflictPolicy
 	client := m.client
 	dir := job.direction
@@ -1313,11 +1310,7 @@ func (m *Manager) maybePullRemote(job *rootJob) {
 	if !ok || client == nil || client.APIKey == "" || client.BaseURL == "" {
 		return
 	}
-	if dir != "" {
-		if !m.shouldPull(dir) {
-			return
-		}
-	} else if !bi {
+	if !m.shouldPull(dir) {
 		return
 	}
 	m.mu.Lock()
