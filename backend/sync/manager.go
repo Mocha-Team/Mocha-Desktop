@@ -86,6 +86,8 @@ type rootJob struct {
 	lastRemotePoll       time.Time
 	remoteFails          int
 	remoteBackoffUntil   time.Time
+	downloading          map[string]bool
+	deletedAt            map[string]time.Time
 }
 
 func pinsFile(stateDir string) string {
@@ -205,6 +207,9 @@ func (m *Manager) AddWithPair(p config.Pair) (FolderState, error) {
 	st = job.status
 	m.mu.Unlock()
 	m.broadcast()
+	if m.shouldPull(direction) {
+		go m.pullNow(clean)
+	}
 	return st, nil
 }
 
@@ -296,17 +301,22 @@ func (m *Manager) SetDirection(pairID, direction string) error {
 		return fmt.Errorf("direction required")
 	}
 	m.mu.Lock()
+	var path string
 	for _, job := range m.roots {
 		if job.pairID == pairID {
 			job.direction = direction
 			job.status.Direction = direction
-			m.mu.Unlock()
-			m.broadcast()
-			return nil
+			path = job.path
+			break
 		}
 	}
 	m.mu.Unlock()
-	return fmt.Errorf("pair not found")
+	if path == "" {
+		return fmt.Errorf("pair not found")
+	}
+	m.broadcast()
+	go m.rescan(path)
+	return nil
 }
 
 func (m *Manager) ListConflicts(pairID string) []Conflict {
@@ -636,6 +646,8 @@ func (m *Manager) Add(path string) (FolderState, error) {
 		activeJobs:   map[string]string{},
 		activeCancel: map[string]context.CancelFunc{},
 		ignores:      ignores,
+		downloading:  map[string]bool{},
+		deletedAt:    map[string]time.Time{},
 	}
 	m.roots[clean] = job
 	if m.conflicts == nil {
@@ -1056,6 +1068,40 @@ func (m *Manager) rescan(path string) {
 		s.Error = ""
 	})
 	m.scanAndEnqueue(path)
+	m.pullNow(path)
+}
+
+func (m *Manager) pullNow(path string) {
+	m.mu.Lock()
+	job, ok := m.roots[path]
+	if !ok {
+		m.mu.Unlock()
+		return
+	}
+	if job.paused {
+		m.mu.Unlock()
+		return
+	}
+	if !m.shouldPull(job.direction) {
+		m.mu.Unlock()
+		return
+	}
+	client := m.client
+	policy := m.conflictPolicy
+	m.mu.Unlock()
+	if client == nil || client.APIKey == "" || client.BaseURL == "" {
+		return
+	}
+	if err := m.pullRemote(job, client, policy); err != nil {
+		return
+	}
+	m.mu.Lock()
+	if j, exists := m.roots[path]; exists {
+		j.lastRemotePoll = time.Now()
+		j.remoteFails = 0
+		j.remoteBackoffUntil = time.Time{}
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) scanAndEnqueue(path string) {
@@ -1097,9 +1143,71 @@ func (m *Manager) scanAndEnqueue(path string) {
 		return
 	}
 	old := job.state
-	m.mu.Unlock()
+	push := m.shouldPush(direction)
+	client := m.client
+	removed := map[string]string{}
+	for rel, st := range old {
+		if _, ok := snap[rel]; !ok {
+			if job.downloading[rel] {
+				continue
+			}
+			if !push {
+				delete(job.state, rel)
+				delete(job.queued, rel)
+				continue
+			}
+			if recentlyDeleted(job, rel) {
+				delete(job.state, rel)
+				delete(job.queued, rel)
+				continue
+			}
+			removed[rel] = st.RemoteID
+			job.deletedAt[rel] = time.Now()
+			delete(job.state, rel)
+			delete(job.queued, rel)
+		}
+	}
+	if len(removed) > 0 {
+		gone := make(map[string]bool, len(removed))
+		for rel := range removed {
+			gone[rel] = true
+		}
+		dropQueued(job, gone)
+		job.status.Files = len(snap)
+		dirtyState := job.state
+		stateFile := job.stateFile
+		base := job.remoteBase
+		m.mu.Unlock()
+		SaveSyncState(stateFile, dirtyState, base)
+		m.broadcast()
+		if push && client != nil && client.APIKey != "" && client.BaseURL != "" {
+			for _, id := range removed {
+				if id != "" {
+					go deleteRemoteRetry(client, id)
+				}
+			}
+		}
+		m.mu.Lock()
+		job, ok = m.roots[path]
+		if !ok {
+			m.mu.Unlock()
+			return
+		}
+		m.mu.Unlock()
+	} else {
+		m.mu.Unlock()
+	}
 	added, modified := DiffWithHash(old, snap)
 	for _, rel := range append(added, modified...) {
+		m.mu.Lock()
+		skip := false
+		if j, exists := m.roots[path]; exists && j.downloading[rel] {
+			skip = true
+		}
+		m.mu.Unlock()
+		if skip {
+			continue
+		}
 		m.enqueue(path, rel)
 	}
 	m.update(path, func(s *FolderState) {
@@ -1118,6 +1226,7 @@ func (m *Manager) scanAndEnqueue(path string) {
 func (m *Manager) serve(job *rootJob) {
 	m.update(job.path, func(s *FolderState) { s.Status = "scanning"; s.Error = "" })
 	m.scanAndEnqueue(job.path)
+	go m.pullNow(job.path)
 	ticker := time.NewTicker(500 * time.Millisecond)
 	remoteTicker := time.NewTicker(45 * time.Second)
 	defer ticker.Stop()
@@ -1152,6 +1261,11 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 	if ev.Type == "deleted" {
 		m.mu.Lock()
 		prev, tracked := job.state[ev.Path]
+		if tracked {
+			job.deletedAt[ev.Path] = time.Now()
+		}
+		delete(job.downloading, ev.Path)
+		dropQueued(job, map[string]bool{ev.Path: true})
 		delete(job.state, ev.Path)
 		st := job.state
 		file := job.stateFile
@@ -1160,15 +1274,12 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 		client := m.client
 		m.mu.Unlock()
 		SaveSyncState(file, st, base)
+		m.broadcast()
 		if tracked && prev.RemoteID != "" && m.shouldPush(direction) && client != nil && client.APIKey != "" && client.BaseURL != "" {
 			go func(id string) {
-				for attempt := 0; attempt < 3; attempt++ {
-					if err := client.DeleteFile(id); err == nil {
-						return
-					}
-					time.Sleep(time.Duration(1<<attempt) * time.Second)
+				if !deleteRemoteRetry(client, id) {
+					m.update(job.path, func(s *FolderState) { s.Error = "remote cleanup failed, retrying" })
 				}
-				m.update(job.path, func(s *FolderState) { s.Error = "remote cleanup failed, retrying" })
 			}(prev.RemoteID)
 		}
 		return
@@ -1179,6 +1290,10 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 		return
 	}
 	m.mu.Lock()
+	if job.downloading[ev.Path] {
+		m.mu.Unlock()
+		return
+	}
 	if st, ok := job.state[ev.Path]; ok && st.Size == info.Size() && st.ModTime == info.ModTime().UnixNano() {
 		m.mu.Unlock()
 		return
@@ -1320,10 +1435,12 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 		if !m.shouldDownload(pairID, rel) {
 			continue
 		}
-		if st, ok := state[rel]; ok && st.Size == rf.size {
-			continue
-		}
 		local := filepath.Join(job.path, filepath.FromSlash(rel))
+		if st, ok := state[rel]; ok && st.Size == rf.size {
+			if info, err := os.Stat(local); err == nil && !info.IsDir() && info.Size() == rf.size {
+				continue
+			}
+		}
 		needsDownload := false
 		if info, err := os.Stat(local); err != nil {
 			needsDownload = true
@@ -1354,9 +1471,27 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 		if !needsDownload {
 			continue
 		}
-		if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
+		m.mu.Lock()
+		if j, exists := m.roots[job.path]; exists {
+			if j.downloading[rel] {
+				m.mu.Unlock()
+				continue
+			}
+			if recentlyDeleted(j, rel) {
+				m.mu.Unlock()
+				continue
+			}
+			j.downloading[rel] = true
+		} else {
+			m.mu.Unlock()
 			continue
 		}
+		m.mu.Unlock()
+		if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
+			m.clearDownloading(job.path, rel)
+			continue
+		}
+		dlStart := time.Now()
 		jobID := transfers.NewJobID("sync-dl-")
 		fileCtx, cancel := context.WithCancel(job.ctx)
 		m.mu.Lock()
@@ -1375,23 +1510,31 @@ func (m *Manager) pullRemote(job *rootJob, client *api.Client, policy string) er
 		}
 		m.mu.Unlock()
 		if derr != nil {
+			m.clearDownloading(job.path, rel)
 			continue
 		}
 		if info, err := os.Stat(local); err == nil && !info.IsDir() {
 			m.mu.Lock()
 			if j, exists := m.roots[job.path]; exists {
-				prev := j.state[rel]
-				if prev.RemoteID == "" {
-					prev.RemoteID = rf.id
+				if at, ok := j.deletedAt[rel]; ok && at.After(dlStart.Add(-time.Second)) {
+					delete(j.downloading, rel)
+					m.mu.Unlock()
+					_ = os.Remove(local)
+					continue
 				}
+				prev := j.state[rel]
+				prev.RemoteID = rf.id
 				prev.Size = info.Size()
 				prev.ModTime = info.ModTime().UnixNano()
 				prev.RemoteModTime = info.ModTime().UnixNano()
 				j.state[rel] = prev
+				delete(j.downloading, rel)
 				SaveSyncState(j.stateFile, j.state, j.remoteBase)
 				j.status.LastSync = time.Now().Unix()
 			}
 			m.mu.Unlock()
+		} else {
+			m.clearDownloading(job.path, rel)
 		}
 	}
 	m.broadcast()
@@ -1421,6 +1564,52 @@ func remotePathForBase(remoteBase string) string {
 }
 
 const SyncRootSegment = "Computers"
+
+const deleteTombstoneTTL = 2 * time.Minute
+
+func recentlyDeleted(job *rootJob, rel string) bool {
+	at, ok := job.deletedAt[rel]
+	if !ok {
+		return false
+	}
+	if time.Since(at) > deleteTombstoneTTL {
+		delete(job.deletedAt, rel)
+		return false
+	}
+	return true
+}
+
+func deleteRemoteRetry(client *api.Client, id string) bool {
+	for attempt := 0; attempt < 3; attempt++ {
+		if err := client.DeleteFile(id); err == nil {
+			return true
+		}
+		time.Sleep(time.Duration(1<<attempt) * time.Second)
+	}
+	return false
+}
+
+func (m *Manager) clearDownloading(path, rel string) {
+	m.mu.Lock()
+	if j, exists := m.roots[path]; exists {
+		delete(j.downloading, rel)
+	}
+	m.mu.Unlock()
+}
+
+func dropQueued(job *rootJob, gone map[string]bool) {
+	for rel := range gone {
+		delete(job.queued, rel)
+	}
+	filtered := job.queue[:0]
+	for _, q := range job.queue {
+		if !gone[q] {
+			filtered = append(filtered, q)
+		}
+	}
+	job.queue = filtered
+	job.status.Pending = len(job.queue)
+}
 
 const maxComputerSegmentLen = 60
 const maxFolderSegmentLen = 80
@@ -1551,6 +1740,7 @@ func (m *Manager) pump(job *rootJob) {
 		rel     string
 		missing bool
 		isDir   bool
+		busy    bool
 		modTime int64
 		fileID  string
 		err     error
@@ -1564,6 +1754,13 @@ func (m *Manager) pump(job *rootJob) {
 		wg.Add(1)
 		go func(i int, rel string) {
 			defer wg.Done()
+			m.mu.Lock()
+			if j, exists := m.roots[job.path]; exists && j.downloading[rel] {
+				m.mu.Unlock()
+				outcomes[i] = outcome{rel: rel, busy: true}
+				return
+			}
+			m.mu.Unlock()
 			local := filepath.Join(job.path, filepath.FromSlash(rel))
 			info, err := os.Stat(local)
 			if err != nil {
@@ -1643,14 +1840,26 @@ func (m *Manager) pump(job *rootJob) {
 		return
 	}
 	dirty := false
+	var missingIDs []string
 	for _, o := range outcomes {
 		switch {
 		case o.missing:
-			if _, exists := j.state[o.rel]; exists {
+			if prev, exists := j.state[o.rel]; exists {
+				if prev.RemoteID != "" {
+					j.deletedAt[o.rel] = time.Now()
+					if m.shouldPush(j.direction) {
+						missingIDs = append(missingIDs, prev.RemoteID)
+					}
+				}
 				delete(j.state, o.rel)
 				dirty = true
 			}
 		case o.isDir:
+		case o.busy:
+			if !j.queued[o.rel] {
+				j.queued[o.rel] = true
+				j.queue = append(j.queue, o.rel)
+			}
 		case o.err != nil:
 			if opCtx.Err() != nil || job.ctx.Err() != nil {
 				if !j.queued[o.rel] {
@@ -1700,4 +1909,9 @@ func (m *Manager) pump(job *rootJob) {
 	j.status.Pending = len(j.queue)
 	m.mu.Unlock()
 	m.broadcast()
+	if len(missingIDs) > 0 && client != nil && client.APIKey != "" && client.BaseURL != "" {
+		for _, id := range missingIDs {
+			go deleteRemoteRetry(client, id)
+		}
+	}
 }
