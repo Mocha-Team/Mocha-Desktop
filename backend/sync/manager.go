@@ -69,6 +69,7 @@ type rootJob struct {
 	stateFile            string
 	state                Snapshot
 	queue                []string
+	inFlight             int
 	queued               map[string]bool
 	sizes                map[string]int64
 	attempts             map[string]int
@@ -966,7 +967,7 @@ func (m *Manager) List() []FolderState {
 			preview = append(preview, filepath.ToSlash(rel))
 		}
 		st.Queued = preview
-		st.Pending = len(job.queue)
+		st.Pending = len(job.queue) + job.inFlight
 		out = append(out, st)
 	}
 	slices.SortFunc(out, func(a, b FolderState) int { return strings.Compare(a.Path, b.Path) })
@@ -977,7 +978,9 @@ func (m *Manager) get(path string) FolderState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if job, ok := m.roots[path]; ok {
-		return job.status
+		st := job.status
+		st.Pending = len(job.queue) + job.inFlight
+		return st
 	}
 	return FolderState{Path: path, Status: "idle"}
 }
@@ -992,6 +995,7 @@ func (m *Manager) broadcast() {
 func (m *Manager) update(path string, fn func(*FolderState)) {
 	m.mu.Lock()
 	if job, ok := m.roots[path]; ok {
+		job.status.Pending = len(job.queue) + job.inFlight
 		fn(&job.status)
 	}
 	m.mu.Unlock()
@@ -1013,7 +1017,6 @@ func (m *Manager) enqueue(path, rel string, size int64) {
 	if !job.queued[rel] {
 		job.queued[rel] = true
 		job.queue = append(job.queue, rel)
-		job.status.Pending = len(job.queue)
 		if job.status.Status == "idle" {
 			job.status.Status = "syncing"
 		}
@@ -1141,7 +1144,6 @@ func (m *Manager) scanAndEnqueue(path string) {
 	if direction != "" && !m.shouldPush(direction) {
 		job.queue = []string{}
 		job.queued = map[string]bool{}
-		job.status.Pending = 0
 		m.mu.Unlock()
 		m.update(path, func(s *FolderState) {
 			if s.Paused {
@@ -1620,7 +1622,6 @@ func dropQueued(job *rootJob, gone map[string]bool) {
 		}
 	}
 	job.queue = filtered
-	job.status.Pending = len(job.queue)
 }
 
 const maxComputerSegmentLen = 60
@@ -1694,7 +1695,6 @@ func (m *Manager) pump(job *rootJob) {
 	if job.direction != "" && !m.shouldPush(job.direction) {
 		job.queue = []string{}
 		job.queued = map[string]bool{}
-		job.status.Pending = 0
 		if job.status.Status == "syncing" {
 			job.status.Status = "idle"
 			job.status.Current = ""
@@ -1743,6 +1743,7 @@ func (m *Manager) pump(job *rootJob) {
 	for _, rel := range rels {
 		delete(job.queued, rel)
 	}
+	job.inFlight += len(rels)
 	job.status.Status = "syncing"
 	if len(rels) == 1 {
 		job.status.Current = filepath.Base(rels[0])
@@ -1750,7 +1751,6 @@ func (m *Manager) pump(job *rootJob) {
 		job.status.Current = fmt.Sprintf("%d files", len(rels))
 	}
 	job.status.Progress = 0
-	job.status.Pending = len(job.queue)
 	client := m.client
 	m.mu.Unlock()
 	m.broadcast()
@@ -1858,6 +1858,7 @@ func (m *Manager) pump(job *rootJob) {
 		m.broadcast()
 		return
 	}
+	j.inFlight -= len(rels)
 	dirty := false
 	var missingIDs []string
 	for _, o := range outcomes {
@@ -1928,7 +1929,6 @@ func (m *Manager) pump(job *rootJob) {
 	} else {
 		j.status.Status = "syncing"
 	}
-	j.status.Pending = len(j.queue)
 	m.mu.Unlock()
 	m.broadcast()
 	if len(missingIDs) > 0 && client != nil && client.APIKey != "" && client.BaseURL != "" {
