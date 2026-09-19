@@ -981,7 +981,9 @@ export default function App() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files" className={`field w-40 rounded-full px-3.5 py-2 text-[13px] transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]`} />
+            {tab === "files" && (
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files" className={`field w-40 rounded-full px-3.5 py-2 text-[13px] transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]`} />
+            )}
             {tab === "files" && (
               <>
                 <button
@@ -1007,14 +1009,14 @@ export default function App() {
                 {selectedIds.size > 0 && (
                   <button onClick={() => void bulkDownload()} className={`glass-button btn-ghost rounded-full px-3.5 py-2 text-[13px]`}>Zip ({selectedIds.size})</button>
                 )}
+                <button onClick={upload} disabled={uploading} className={`glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98] disabled:opacity-60`}>
+                  {uploading ? "Uploading" : "Upload"}
+                  <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110">
+                    <ArrowIcon />
+                  </span>
+                </button>
               </>
             )}
-            <button onClick={upload} disabled={uploading} className={`glass-button btn-gold group flex items-center gap-2 rounded-full py-1 pl-4 pr-1 text-[13px] font-semibold active:scale-[0.98] disabled:opacity-60`}>
-              {uploading ? "Uploading" : "Upload"}
-              <span className="flex h-6 w-6 items-center justify-center rounded-full bg-black/10 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] group-hover:scale-110">
-                <ArrowIcon />
-              </span>
-            </button>
           </div>
         </div>
 
