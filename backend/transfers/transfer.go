@@ -52,6 +52,8 @@ type Progress struct {
 type Emitter func(event string, payload any)
 
 const DefaultFileConcurrency = 3
+const SmallFileConcurrency = 8
+const SmallFileThreshold = 50 * 1024 * 1024
 
 var jobCounter atomic.Uint64
 

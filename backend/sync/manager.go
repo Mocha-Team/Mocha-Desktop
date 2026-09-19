@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -69,6 +70,7 @@ type rootJob struct {
 	state                Snapshot
 	queue                []string
 	queued               map[string]bool
+	sizes                map[string]int64
 	attempts             map[string]int
 	status               FolderState
 	watcher              *Watcher
@@ -637,6 +639,7 @@ func (m *Manager) Add(path string) (FolderState, error) {
 		state:        snap,
 		queue:        []string{},
 		queued:       map[string]bool{},
+		sizes:        map[string]int64{},
 		attempts:     map[string]int{},
 		status:       FolderState{Path: clean, RemotePath: remotePathForBase(base), PairID: pairID, Direction: "upload-only", Status: "scanning"},
 		watcher:      w,
@@ -985,7 +988,7 @@ func (m *Manager) update(path string, fn func(*FolderState)) {
 	m.broadcast()
 }
 
-func (m *Manager) enqueue(path, rel string) {
+func (m *Manager) enqueue(path, rel string, size int64) {
 	m.mu.Lock()
 	job, ok := m.roots[path]
 	if !ok {
@@ -996,6 +999,7 @@ func (m *Manager) enqueue(path, rel string) {
 		m.mu.Unlock()
 		return
 	}
+	job.sizes[rel] = size
 	if !job.queued[rel] {
 		job.queued[rel] = true
 		job.queue = append(job.queue, rel)
@@ -1196,7 +1200,11 @@ func (m *Manager) scanAndEnqueue(path string) {
 		m.mu.Unlock()
 	}
 	added, modified := DiffWithHash(old, snap)
-	for _, rel := range append(added, modified...) {
+	pending := append(added, modified...)
+	slices.SortStableFunc(pending, func(a, b string) int {
+		return cmp.Compare(snap[a].Size, snap[b].Size)
+	})
+	for _, rel := range pending {
 		m.mu.Lock()
 		skip := false
 		if j, exists := m.roots[path]; exists && j.downloading[rel] {
@@ -1206,7 +1214,7 @@ func (m *Manager) scanAndEnqueue(path string) {
 		if skip {
 			continue
 		}
-		m.enqueue(path, rel)
+		m.enqueue(path, rel, snap[rel].Size)
 	}
 	m.update(path, func(s *FolderState) {
 		if s.Paused {
@@ -1297,7 +1305,7 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 		return
 	}
 	m.mu.Unlock()
-	m.enqueue(job.path, ev.Path)
+	m.enqueue(job.path, ev.Path, info.Size())
 }
 
 func (m *Manager) maybePullRemote(job *rootJob) {
@@ -1593,6 +1601,7 @@ func (m *Manager) clearDownloading(path, rel string) {
 func dropQueued(job *rootJob, gone map[string]bool) {
 	for rel := range gone {
 		delete(job.queued, rel)
+		delete(job.sizes, rel)
 	}
 	filtered := job.queue[:0]
 	for _, q := range job.queue {
@@ -1707,6 +1716,13 @@ func (m *Manager) pump(job *rootJob) {
 	batchSize := transfers.DefaultFileConcurrency
 	if batchSize < 1 {
 		batchSize = 1
+	}
+	small := 0
+	for small < len(job.queue) && small < transfers.SmallFileConcurrency && job.sizes[job.queue[small]] < transfers.SmallFileThreshold {
+		small++
+	}
+	if small > batchSize {
+		batchSize = small
 	}
 	if len(job.queue) < batchSize {
 		batchSize = len(job.queue)
@@ -1837,6 +1853,7 @@ func (m *Manager) pump(job *rootJob) {
 	for _, o := range outcomes {
 		switch {
 		case o.missing:
+			delete(j.sizes, o.rel)
 			if prev, exists := j.state[o.rel]; exists {
 				if prev.RemoteID != "" {
 					j.deletedAt[o.rel] = time.Now()
@@ -1864,6 +1881,7 @@ func (m *Manager) pump(job *rootJob) {
 			j.attempts[o.rel]++
 			if j.attempts[o.rel] >= 3 {
 				delete(j.attempts, o.rel)
+				delete(j.sizes, o.rel)
 				j.status.Error = filepath.Base(o.rel) + ": " + o.err.Error()
 			} else if !j.queued[o.rel] {
 				j.queued[o.rel] = true
@@ -1871,6 +1889,7 @@ func (m *Manager) pump(job *rootJob) {
 			}
 		default:
 			delete(j.attempts, o.rel)
+			delete(j.sizes, o.rel)
 			if fi, serr := os.Stat(filepath.Join(job.path, filepath.FromSlash(o.rel))); serr == nil && !fi.IsDir() {
 				st := FileState{Size: fi.Size(), ModTime: fi.ModTime().UnixNano(), RemoteModTime: fi.ModTime().UnixNano()}
 				if prev, exists := j.state[o.rel]; exists {
