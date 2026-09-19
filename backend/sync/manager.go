@@ -250,8 +250,10 @@ func (m *Manager) AttachRemote(remotePath, localPath, direction string, checked 
 	if err := os.MkdirAll(clean, 0o755); err != nil {
 		return FolderState{}, err
 	}
-	if entries, err := os.ReadDir(clean); err == nil && len(entries) > 0 {
-		return FolderState{}, fmt.Errorf("folder not empty")
+	if direction != "upload-only" {
+		if entries, err := os.ReadDir(clean); err == nil && len(entries) > 0 {
+			return FolderState{}, fmt.Errorf("folder not empty")
+		}
 	}
 	p := config.Pair{
 		ID:         config.NewOpaqueID("pair-"),

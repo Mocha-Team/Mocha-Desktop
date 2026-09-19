@@ -44,6 +44,8 @@ export default function App() {
   const [wizardSource, setWizardSource] = useState<"local" | "remote">("local");
   const [wizardDirection, setWizardDirection] = useState("upload-only");
   const [wizardRemotePath, setWizardRemotePath] = useState("/");
+  const [wizardFolders, setWizardFolders] = useState<string[]>([]);
+  const [wizardFoldersLoading, setWizardFoldersLoading] = useState(false);
   const [wizardRemoteFiles, setWizardRemoteFiles] = useState<RemotePickFile[]>([]);
   const [wizardRemoteChecked, setWizardRemoteChecked] = useState<Set<string>>(new Set());
   const [wizardRemoteLoading, setWizardRemoteLoading] = useState(false);
@@ -367,6 +369,11 @@ export default function App() {
 
   const navigate = (p: string) => setPath(p.includes("/") ? p : path + p.replace(/^\//, "") + "/");
 
+  const wizardCrumbs = useMemo(() => {
+    const parts = wizardRemotePath.split("/").filter(Boolean);
+    return [{ label: "Mocha", value: "/" }, ...parts.map((p, i) => ({ label: p, value: "/" + parts.slice(0, i + 1).join("/") + "/" }))];
+  }, [wizardRemotePath]);
+
   async function connect(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
@@ -653,6 +660,7 @@ export default function App() {
     setWizardSource("local");
     setWizardDirection("upload-only");
     setWizardRemotePath("/");
+    setWizardFolders([]);
     setWizardRemoteFiles([]);
     setWizardRemoteChecked(new Set());
     setWizardKeepLocal(true);
@@ -663,8 +671,11 @@ export default function App() {
   function pickWizardSource(s: "local" | "remote") {
     setWizardSource(s);
     setWizardDirection(s === "remote" ? "mirror" : "upload-only");
+    setWizardRemotePath("/");
+    setWizardFolders([]);
     setWizardRemoteFiles([]);
     setWizardRemoteChecked(new Set());
+    if (s === "remote") void loadWizardFolder("/");
   }
 
   function pairKeyFor(f: SyncFolder): string {
@@ -739,6 +750,32 @@ export default function App() {
     }
   }
 
+  async function loadWizardFolder(p: string) {
+    let target = (p || "/").trim() || "/";
+    if (!target.startsWith("/")) target = "/" + target;
+    if (!target.endsWith("/")) target += "/";
+    setWizardRemotePath(target);
+    setWizardRemoteFiles([]);
+    setWizardRemoteChecked(new Set());
+    setWizardFoldersLoading(true);
+    try {
+      const list = await api.list(target, 200, "", "");
+      setWizardFolders(list.folders || []);
+    } catch (err) {
+      setWizardFolders([]);
+      fail(err, "Folder list failed");
+    } finally {
+      setWizardFoldersLoading(false);
+    }
+  }
+
+  function enterWizardFolder(name: string) {
+    const rel = name.replace(/^\/+/, "").replace(/\/+$/, "");
+    if (!rel) return;
+    const base = wizardRemotePath.endsWith("/") ? wizardRemotePath : wizardRemotePath + "/";
+    void loadWizardFolder(base + rel);
+  }
+
   async function loadWizardRemote() {
     const target = wizardRemotePath.trim() || "/";
     setWizardRemoteLoading(true);
@@ -769,18 +806,22 @@ export default function App() {
     });
   }
 
+  function wizardNeedsFiles(): boolean {
+    return wizardSource === "remote" && wizardDirection !== "upload-only";
+  }
+
+  const wizardSteps = wizardSource === "local" ? ["source", "direction", "keep", "review"] : wizardNeedsFiles() ? ["source", "folder", "direction", "files", "review"] : ["source", "folder", "direction", "review"];
+  const wizardStage = wizardSteps[wizardStep - 1] ?? wizardSteps[0];
+
   function wizardCanNext(): boolean {
-    if (wizardStep === 2 && wizardSource === "remote") return wizardRemotePath.trim().length > 0;
-    if (wizardStep === 4 && wizardSource === "remote") return wizardRemoteChecked.size > 0;
+    if (wizardStep === 2 && wizardSource === "remote") return wizardRemotePath.replace(/\/+$/, "").length > 0;
+    if (wizardStage === "files") return wizardRemoteChecked.size > 0;
     return true;
   }
 
-  const wizardSteps = wizardSource === "local" ? ["source", "direction", "keep", "review"] : ["source", "folder", "direction", "files", "review"];
-  const wizardStage = wizardSteps[wizardStep - 1] ?? wizardSteps[0];
-
   async function startWizardSync(close: () => void) {
     if (wizardBusy) return;
-    if (wizardSource === "remote" && wizardRemoteChecked.size === 0) {
+    if (wizardNeedsFiles() && wizardRemoteChecked.size === 0) {
       notify("Pick at least one file to keep");
       return;
     }
@@ -1424,13 +1465,38 @@ export default function App() {
                 {wizardStage === "folder" && (
                   <div className="space-y-2">
                     <div className="font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Pick a folder</div>
-                    <div className="space-y-2">
-                      <div className="flex gap-2">
-                        <input value={wizardRemotePath} onChange={(e) => setWizardRemotePath(e.target.value)} placeholder="/Photos/" className="field w-full rounded-2xl px-4 py-2 text-sm" />
-                        <button onClick={() => void loadWizardRemote()} disabled={wizardRemoteLoading} className="glass-button btn-gold shrink-0 rounded-full px-4 py-2 text-sm font-semibold disabled:opacity-60">{wizardRemoteLoading ? "Loading" : "Load"}</button>
-                      </div>
-                      <div className="font-mono text-[11px] text-mocha-muted">{wizardRemoteFiles.length === 0 ? "Browse Mocha, then load a path to see files." : `${wizardRemoteFiles.length} files found in Mocha.`}</div>
+                    <div className="flex flex-wrap items-center gap-1 font-mono text-[11px] text-mocha-muted">
+                      {wizardCrumbs.map((c, i) => (
+                        <span key={c.value} style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }} className="file-row-in flex items-center gap-1">
+                          {i > 0 && (
+                            <span className="text-mocha-dim" aria-hidden="true">
+                              <CaretIcon />
+                            </span>
+                          )}
+                          <button onClick={() => void loadWizardFolder(c.value)} className="rounded-full border border-white/5 bg-white/5 px-3 py-1 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-mocha-gold/30 hover:text-mocha-goldbright">
+                            {c.label}
+                          </button>
+                        </span>
+                      ))}
                     </div>
+                    {wizardFoldersLoading ? (
+                      <div className="flex flex-col gap-2 p-1">
+                        <div className="skeleton-shimmer h-8 rounded-full" />
+                        <div className="skeleton-shimmer h-8 rounded-full" style={{ animationDelay: "100ms" }} />
+                        <div className="skeleton-shimmer h-8 rounded-full" style={{ animationDelay: "200ms" }} />
+                      </div>
+                    ) : wizardFolders.length > 0 ? (
+                      <div className="flex flex-wrap gap-2 p-1">
+                        {wizardFolders.map((f, i) => (
+                          <div key={f} style={{ animationDelay: `${Math.min(i, 10) * 45}ms` }} className="folder-enter card-hover flex items-center rounded-full border border-white/10 bg-white/5 px-4 py-1">
+                            <button onClick={() => enterWizardFolder(f)} className="font-mono text-xs text-mocha-secondary hover:text-mocha-goldbright">{f}</button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-white/5 bg-white/[0.02] px-4 py-3 text-[13px] text-mocha-muted">No subfolders here. Pick this folder, or go back up.</div>
+                    )}
+                    <div className="font-mono text-[11px] text-mocha-muted">Send to <span className="text-mocha-goldbright">{wizardRemotePath}</span></div>
                   </div>
                 )}
                 {wizardStage === "direction" && (
@@ -1508,7 +1574,7 @@ export default function App() {
                       </div>
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-mocha-muted">Files</span>
-                        <span className="truncate font-mono text-[12px]">{wizardSource === "remote" ? `${wizardRemoteChecked.size} of ${wizardRemoteFiles.length} kept on this PC` : wizardKeepLocal ? "All files, kept on this PC" : "All files"}</span>
+                        <span className="truncate font-mono text-[12px]">{wizardSource === "remote" ? (wizardNeedsFiles() ? `${wizardRemoteChecked.size} of ${wizardRemoteFiles.length} kept on this PC` : "All files upload to Mocha") : wizardKeepLocal ? "All files, kept on this PC" : "All files"}</span>
                       </div>
                     </div>
                     <div className="text-[13px] text-mocha-muted">Start sync opens the system dialog to pick the folder on this PC.</div>
@@ -1519,7 +1585,7 @@ export default function App() {
               <div className="mt-3 flex shrink-0 items-center justify-between gap-2">
                 <button onClick={() => { setWizardStepDir(-1); setWizardStep((s) => Math.max(1, s - 1)); }} disabled={wizardStep === 1 || wizardBusy} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm disabled:opacity-50">Back</button>
                 {wizardStep < wizardSteps.length ? (
-                  <button onClick={() => void (async () => { if (wizardSource === "remote" && wizardStage === "folder" && wizardRemoteFiles.length === 0) await loadWizardRemote(); setWizardStepDir(1); setWizardStep((s) => Math.min(wizardSteps.length, s + 1)); })()} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-mocha-secondary">Continue</button>
+                  <button onClick={() => void (async () => { if (wizardNeedsFiles() && wizardStage === "folder" && wizardRemoteFiles.length === 0) await loadWizardRemote(); setWizardStepDir(1); setWizardStep((s) => Math.min(wizardSteps.length, s + 1)); })()} disabled={!wizardCanNext() || wizardBusy} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-mocha-secondary">Continue</button>
                 ) : (
                   <button onClick={() => void startWizardSync(close)} disabled={wizardBusy || !wizardCanNext()} className="glass-button btn-gold rounded-full px-5 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:bg-white/10 disabled:text-mocha-secondary">{wizardBusy ? "Starting" : "Start sync"}</button>
                 )}
