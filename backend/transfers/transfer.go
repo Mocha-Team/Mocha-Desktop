@@ -267,6 +267,9 @@ func UploadFileWithID(ctx context.Context, client *api.Client, localPath, remote
 		go putPart(i+1, off, ln)
 	}
 	wg.Wait()
+	if size == 0 {
+		loaded.Store(0)
+	}
 	loadedFinal := loaded.Load()
 	if ctx.Err() != nil {
 		client.AbortMultipartCtx(ctx, init.UploadID, init.Key, init.NodeID, originalName, remotePath)
