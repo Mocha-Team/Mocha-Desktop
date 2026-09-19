@@ -120,7 +120,17 @@ func savePinsFile(stateDir string, pins map[string]map[string]string) {
 }
 
 func (m *Manager) persistPins() {
-	savePinsFile(m.stateDir, m.pins)
+	m.mu.Lock()
+	pins := make(map[string]map[string]string, len(m.pins))
+	for pairID, files := range m.pins {
+		cp := make(map[string]string, len(files))
+		for rel, pin := range files {
+			cp[rel] = pin
+		}
+		pins[pairID] = cp
+	}
+	m.mu.Unlock()
+	savePinsFile(m.stateDir, pins)
 }
 
 func normalizeRemoteBase(p string) string {
@@ -511,7 +521,7 @@ func (m *Manager) SetFolderIgnores(path string, patterns []string) {
 			delete(job.state, rel)
 		}
 	}
-	st := job.state
+	st := maps.Clone(job.state)
 	file := job.stateFile
 	base := job.remoteBase
 	m.mu.Unlock()
@@ -1176,7 +1186,7 @@ func (m *Manager) scanAndEnqueue(path string) {
 		}
 		dropQueued(job, gone)
 		job.status.Files = len(snap)
-		dirtyState := job.state
+		dirtyState := maps.Clone(job.state)
 		stateFile := job.stateFile
 		base := job.remoteBase
 		m.mu.Unlock()
@@ -1273,7 +1283,7 @@ func (m *Manager) handleEvent(job *rootJob, ev Event) {
 		delete(job.downloading, ev.Path)
 		dropQueued(job, map[string]bool{ev.Path: true})
 		delete(job.state, ev.Path)
-		st := job.state
+		st := maps.Clone(job.state)
 		file := job.stateFile
 		base := job.remoteBase
 		direction := job.direction
