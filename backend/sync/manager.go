@@ -1248,7 +1248,7 @@ func (m *Manager) serve(job *rootJob) {
 	m.scanAndEnqueue(job.path)
 	go m.pullNow(job.path)
 	ticker := time.NewTicker(500 * time.Millisecond)
-	remoteTicker := time.NewTicker(45 * time.Second)
+	remoteTicker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 	defer remoteTicker.Stop()
 	for {
@@ -1341,9 +1341,9 @@ func (m *Manager) maybePullRemote(job *rootJob) {
 	backoffUntil := job.remoteBackoffUntil
 	idle := len(job.queue) == 0 && job.status.Status == "idle"
 	m.mu.Unlock()
-	interval := 30 * time.Second
+	interval := 60 * time.Second
 	if idle {
-		interval = 90 * time.Second
+		interval = 5 * time.Minute
 	}
 	if paused || time.Since(last) < interval || time.Now().Before(backoffUntil) {
 		return

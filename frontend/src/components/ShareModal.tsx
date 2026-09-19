@@ -11,29 +11,28 @@ const EXPIRATION_OPTIONS = [
   { label: "Permanent", value: "never" },
 ];
 
-export function ShareModal({ file, appUrl, onClose, onCreated }: {
+export function ShareModal({ file, appUrl, onClose, onCreated, onError }: {
   file: FileItem;
   appUrl: string;
   onClose: () => void;
   onCreated: () => void;
+  onError: (e: unknown) => void;
 }) {
   const [expires, setExpires] = useState("24");
   const [maxDownloads, setMaxDownloads] = useState("");
   const [password, setPassword] = useState("");
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
   async function create() {
     setCreating(true);
-    setError(null);
     try {
       const sh = await api.createShare(file.id, expires === "never" ? null : Number(expires), maxDownloads ? Number(maxDownloads) : null, password);
       onCreated();
       setShareUrl(`${appUrl}/share/${sh.token}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Share failed");
+      onError(err);
     } finally {
       setCreating(false);
     }
@@ -54,7 +53,6 @@ export function ShareModal({ file, appUrl, onClose, onCreated }: {
     setPassword("");
     setMaxDownloads("");
     setExpires("24");
-    setError(null);
   }
 
   return (
@@ -81,7 +79,6 @@ export function ShareModal({ file, appUrl, onClose, onCreated }: {
                 <label className="mb-1 block font-mono text-[10px] uppercase tracking-[0.2em] text-mocha-muted">Password</label>
                 <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="No password" className="field w-full rounded-2xl px-4 py-3 text-sm" />
               </div>
-              {error && <div className="notice-in rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-2.5 font-mono text-xs text-red-200">{error}</div>}
               <div className="rise-in flex gap-2" style={{ animationDelay: "260ms" }}>
                 <button onClick={() => void create()} disabled={creating} className="glass-button btn-gold flex-1 rounded-full py-2 text-sm font-semibold disabled:opacity-60">{creating ? "Creating" : "Create link"}</button>
                 <button onClick={close} className="glass-button btn-ghost rounded-full px-4 py-2 text-sm">Cancel</button>

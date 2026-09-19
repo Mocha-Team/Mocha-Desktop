@@ -20,6 +20,11 @@ type Tab = "files" | "shares" | "sync" | "activity" | "trash" | "settings";
 
 let noticeSeq = 0;
 
+function makeCrumbs(p: string, rootLabel: string) {
+  const parts = p.split("/").filter(Boolean);
+  return [{ label: rootLabel, value: "/" }, ...parts.map((part, i) => ({ label: part, value: "/" + parts.slice(0, i + 1).join("/") + "/" }))];
+}
+
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -78,7 +83,6 @@ export default function App() {
   const [apiKey, setApiKey] = useState("");
   const [booted, setBooted] = useState(false);
   const [filesLoading, setFilesLoading] = useState(false);
-  const [filesError, setFilesError] = useState<string | null>(null);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [removing, setRemoving] = useState(false);
   const [removePreview, setRemovePreview] = useState<{ path: string; preview: RemoveSyncPreview } | null>(null);
@@ -108,7 +112,6 @@ export default function App() {
   const [previewFile, setPreviewFile] = useState<FileItem | null>(null);
   const [previewUrl, setPreviewUrl] = useState("");
   const [previewUrlLoading, setPreviewUrlLoading] = useState(false);
-  const [previewUrlError, setPreviewUrlError] = useState<string | null>(null);
   const previewReq = useRef(0);
   const filesReq = useRef(0);
   const lastPathRef = useRef<string | null>(null);
@@ -162,7 +165,6 @@ export default function App() {
     const navigating = lastPathRef.current !== path;
     lastPathRef.current = path;
     setFilesLoading(true);
-    setFilesError(null);
     setCursor("");
     setHasMore(false);
     setLoadingMore(false);
@@ -190,9 +192,7 @@ export default function App() {
         setHasMore(!!list.hasMore);
       } catch (err) {
         if (filesReq.current !== req) return;
-        const msg = err instanceof Error ? err.message : "File listing failed";
-        setFilesError(msg);
-        notify(msg, "error");
+        fail(err, "File listing failed");
       }
     } catch (e) {
       if (filesReq.current !== req) return;
@@ -362,17 +362,11 @@ export default function App() {
 
   useRevealRoot([tab, files.length, status?.configured]);
 
-  const crumbs = useMemo(() => {
-    const parts = path.split("/").filter(Boolean);
-    return [{ label: "Files", value: "/" }, ...parts.map((p, i) => ({ label: p, value: "/" + parts.slice(0, i + 1).join("/") + "/" }))];
-  }, [path]);
+  const crumbs = useMemo(() => makeCrumbs(path, "Files"), [path]);
 
   const navigate = (p: string) => setPath(p.includes("/") ? p : path + p.replace(/^\//, "") + "/");
 
-  const wizardCrumbs = useMemo(() => {
-    const parts = wizardRemotePath.split("/").filter(Boolean);
-    return [{ label: "Mocha", value: "/" }, ...parts.map((p, i) => ({ label: p, value: "/" + parts.slice(0, i + 1).join("/") + "/" }))];
-  }, [wizardRemotePath]);
+  const wizardCrumbs = useMemo(() => makeCrumbs(wizardRemotePath, "Mocha"), [wizardRemotePath]);
 
   async function connect(e: React.FormEvent) {
     e.preventDefault();
@@ -426,19 +420,20 @@ export default function App() {
     const req = ++previewReq.current;
     setPreviewFile(file);
     setPreviewUrl("");
-    setPreviewUrlError(null);
     setPreviewUrlLoading(true);
     try {
       const res = await api.previewUrl(file.id);
       if (previewReq.current !== req) return;
       if (!res?.url) {
-        setPreviewUrlError("Preview URL is missing");
+        notify("Preview URL is missing", "error");
+        setPreviewFile(null);
         return;
       }
       setPreviewUrl(res.url);
     } catch (err) {
       if (previewReq.current !== req) return;
-      setPreviewUrlError(err instanceof Error ? err.message : "Preview failed");
+      fail(err, "Preview failed");
+      setPreviewFile(null);
     } finally {
       if (previewReq.current === req) setPreviewUrlLoading(false);
     }
@@ -448,7 +443,6 @@ export default function App() {
     previewReq.current++;
     setPreviewFile(null);
     setPreviewUrl("");
-    setPreviewUrlError(null);
     setPreviewUrlLoading(false);
   }, []);
 
@@ -545,13 +539,13 @@ export default function App() {
   }
 
   async function bulkDownload() {
-    const ids = [...selectedIds];
-    if (ids.length === 0) {
+    const items = files.filter((f) => selectedIds.has(f.id)).map((f) => ({ id: f.id, name: f.original_name }));
+    if (items.length === 0) {
       notify("Select files first");
       return;
     }
     try {
-      const dest = await api.bulkDownload(ids, []);
+      const dest = await api.bulkDownload(items);
       notify("Saved " + dest, "success");
     } catch (err) {
       fail(err, "Bulk download failed");
@@ -599,8 +593,9 @@ export default function App() {
     try {
       const list = await api.getFolderIgnores(folderPath);
       setIgnoreDraft(list.join("\n"));
-    } catch {
+    } catch (err) {
       setIgnoreDraft("");
+      fail(err, "Could not load ignore rules");
     }
   }
 
@@ -708,14 +703,16 @@ export default function App() {
     try {
       const m = await api.getFilePins(pairId);
       setPins((p) => ({ ...p, [pairId]: m || {} }));
-    } catch {
+    } catch (err) {
       setPins((p) => ({ ...p, [pairId]: p[pairId] || {} }));
+      fail(err, "Could not load file pins");
     }
     try {
       const list = await api.listConflicts(pairId);
       setConflicts((c) => ({ ...c, [pairId]: list || [] }));
-    } catch {
+    } catch (err) {
       setConflicts((c) => ({ ...c, [pairId]: c[pairId] || [] }));
+      fail(err, "Could not load conflicts");
     }
     open.add(pairId);
     setSyncDetails(open);
@@ -770,10 +767,7 @@ export default function App() {
   }
 
   function enterWizardFolder(name: string) {
-    const rel = name.replace(/^\/+/, "").replace(/\/+$/, "");
-    if (!rel) return;
-    const base = wizardRemotePath.endsWith("/") ? wizardRemotePath : wizardRemotePath + "/";
-    void loadWizardFolder(base + rel);
+    void loadWizardFolder(wizardRemotePath + name.replace(/^\/+|\/+$/g, "") + "/");
   }
 
   async function loadWizardRemote() {
@@ -814,7 +808,7 @@ export default function App() {
   const wizardStage = wizardSteps[wizardStep - 1] ?? wizardSteps[0];
 
   function wizardCanNext(): boolean {
-    if (wizardStep === 2 && wizardSource === "remote") return wizardRemotePath.replace(/\/+$/, "").length > 0;
+    if (wizardStage === "folder") return wizardRemotePath.replace(/\/+$/, "").length > 0;
     if (wizardStage === "files") return wizardRemoteChecked.size > 0;
     return true;
   }
@@ -977,7 +971,7 @@ export default function App() {
     <div className="flex h-[100dvh] flex-col overflow-hidden bg-[var(--background)] px-4 pb-4 text-mocha-primary">
       <Titlebar />
 
-      <header className="nav-enter fixed left-1/2 top-[52px] z-30 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2">
+      <header className="nav-enter fixed left-0 right-0 top-[52px] z-30 mx-auto w-max max-w-[calc(100vw-2rem)]">
         <div className={`flex items-center gap-1 rounded-full border border-white/10 bg-black/60 py-1 pl-4 pr-1 shadow-[0_20px_60px_-20px_rgba(0,0,0,0.8)] backdrop-blur-3xl`}>
           <span className="mr-2 font-serif text-base italic text-mocha-goldbright">Mocha</span>
           {(["files", "shares", "sync", "activity", "trash"] as Tab[]).map((t) => (
@@ -1002,31 +996,27 @@ export default function App() {
       </header>
 
       <main className="relative mx-auto flex w-full max-w-5xl flex-1 flex-col overflow-hidden pt-24">
-        <div className="rise-in flex shrink-0 flex-wrap items-center justify-between gap-4">
-          <div>
-            {tab === "files" && path !== "/" && (
-              <div className="flex flex-wrap items-center gap-1 font-mono text-[11px] text-mocha-muted">
-                {crumbs.map((c, i) => (
-                  <span key={c.value} style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }} className="file-row-in flex items-center gap-1">
-                    {i > 0 && (
-                      <span className="text-mocha-dim" aria-hidden="true">
-                        <CaretIcon />
-                      </span>
-                    )}
-                    <button onClick={() => setPath(c.value)} className="rounded-full border border-white/5 bg-white/5 px-3 py-1 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-mocha-gold/30 hover:text-mocha-goldbright">
-                      {c.label}
-                    </button>
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-          <div className="flex items-center gap-2">
-            {tab === "files" && (
-              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files" className={`field w-40 rounded-full px-3.5 py-2 text-[13px] transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)]`} />
-            )}
-            {tab === "files" && (
-              <>
+        <div className="rise-in flex shrink-0 flex-col gap-3.5">
+          {tab === "files" && path !== "/" && (
+            <div className="flex flex-wrap items-center gap-1 font-mono text-[11px] text-mocha-muted">
+              {crumbs.map((c, i) => (
+                <span key={c.value} style={{ animationDelay: `${Math.min(i, 8) * 40}ms` }} className="file-row-in flex items-center gap-1">
+                  {i > 0 && (
+                    <span className="text-mocha-dim" aria-hidden="true">
+                      <CaretIcon />
+                    </span>
+                  )}
+                  <button onClick={() => setPath(c.value)} className="rounded-full border border-white/5 bg-white/5 px-3 py-1 transition-all duration-700 ease-[cubic-bezier(0.32,0.72,0,1)] hover:border-mocha-gold/30 hover:text-mocha-goldbright">
+                    {c.label}
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          {tab === "files" && (
+            <div className="flex items-center gap-3 rounded-3xl border border-white/5 bg-white/[0.02] px-3 py-2.5">
+              <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files" className={`field min-w-0 flex-1 max-w-[420px] rounded-full px-4 py-2.5 text-[13px]`} />
+              <div className="ml-auto flex items-center gap-2">
                 <button
                   onClick={() => void changeFilesView(filesView === "grid" ? "list" : "grid")}
                   title={filesView === "grid" ? "List view" : "Grid view"}
@@ -1056,9 +1046,9 @@ export default function App() {
                     <ArrowIcon />
                   </span>
                 </button>
-              </>
-            )}
-          </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {updateInfo?.available && (
@@ -1082,7 +1072,6 @@ export default function App() {
               onMoveFolder={(name) => openModalFor({ kind: "moveFolder", name })}
               files={files}
               filesLoading={filesLoading}
-              filesError={filesError}
               hasMore={hasMore}
               loadingMore={loadingMore}
               onLoadMore={() => void loadMore()}
@@ -1369,6 +1358,7 @@ export default function App() {
           appUrl={appUrl}
           onClose={() => setShareFile(null)}
           onCreated={() => { void api.shares().then((sh) => setShares(sh)).catch(() => undefined); }}
+          onError={(e) => fail(e, "Share failed")}
         />
       )}
 
@@ -1600,7 +1590,6 @@ export default function App() {
           file={previewFile}
           url={previewUrl}
           loading={previewUrlLoading}
-          error={previewUrlError}
           position={(() => {
             const idx = previewableFiles.findIndex((f) => f.id === previewFile.id);
             return idx >= 0 ? `${idx + 1} / ${previewableFiles.length}` : null;

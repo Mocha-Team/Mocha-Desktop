@@ -3,7 +3,7 @@ import { TransferPanel } from "./TransferPanel";
 import { FileList, type FileActions } from "./FileList";
 import { FileGrid } from "./FileGrid";
 
-export function FilesTab({ crumbs, onNavigate, filesView, folders, onRenameFolder, onMoveFolder, files, filesLoading, filesError, hasMore, loadingMore, onLoadMore, query, onClearSearch, selectedIds, onToggleSelect, actions, storage, profile, transfers, onCancelTransfer }: {
+export function FilesTab({ crumbs, onNavigate, filesView, folders, onRenameFolder, onMoveFolder, files, filesLoading, hasMore, loadingMore, onLoadMore, query, onClearSearch, selectedIds, onToggleSelect, actions, storage, profile, transfers, onCancelTransfer }: {
   crumbs: { label: string; value: string }[];
   onNavigate: (p: string) => void;
   filesView: "list" | "grid";
@@ -12,7 +12,6 @@ export function FilesTab({ crumbs, onNavigate, filesView, folders, onRenameFolde
   onMoveFolder: (name: string) => void;
   files: FileItem[];
   filesLoading: boolean;
-  filesError: string | null;
   hasMore: boolean;
   loadingMore: boolean;
   onLoadMore: () => void;
@@ -54,7 +53,7 @@ export function FilesTab({ crumbs, onNavigate, filesView, folders, onRenameFolde
                 ) : (
                   <FileList files={files} selectedIds={selectedIds} onToggleSelect={onToggleSelect} actions={actions} />
                 )}
-                {files.length === 0 && !filesError && (
+                {files.length === 0 && (
               <div className="empty-in flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
                 {query ? (
                   <>
@@ -76,9 +75,6 @@ export function FilesTab({ crumbs, onNavigate, filesView, folders, onRenameFolde
                 )}
               </div>
             )}
-                {filesError && (
-                  <div className="notice-in mx-4 mb-4 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 font-mono text-xs text-red-200">{filesError}</div>
-                )}
                 {hasMore && (
                   <button onClick={onLoadMore} disabled={loadingMore} className="glass-button btn-ghost mx-4 mb-4 rounded-full px-4 py-2 font-mono text-[11px] disabled:opacity-50">
                     {loadingMore ? "Loading" : "Load more"}

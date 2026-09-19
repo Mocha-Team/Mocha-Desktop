@@ -154,7 +154,7 @@ func appVersion() string {
 func (a *App) heartbeatLoop() {
 	time.Sleep(10 * time.Second)
 	a.sendHeartbeat()
-	ticker := time.NewTicker(60 * time.Second)
+	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 	for range ticker.C {
 		a.sendHeartbeat()
@@ -614,8 +614,8 @@ func (a *App) ListArchive(fileID string) ([]api.ArchiveEntry, error) {
 	return a.client.ListArchive(fileID)
 }
 
-func (a *App) BulkDownloadTo(fileIDs, folderPaths []string) (string, error) {
-	if len(fileIDs) == 0 && len(folderPaths) == 0 {
+func (a *App) BulkDownloadTo(files []transfers.ZipFile) (string, error) {
+	if len(files) == 0 {
 		return "", fmt.Errorf("nothing selected")
 	}
 	dest, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{Title: "Save zip as", DefaultFilename: "mocha-download.zip", Filters: []runtime.FileFilter{{DisplayName: "Zip archive (*.zip)", Pattern: "*.zip"}}})
@@ -629,10 +629,24 @@ func (a *App) BulkDownloadTo(fileIDs, folderPaths []string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer out.Close()
-	if err := a.client.BulkDownloadStream(fileIDs, folderPaths, out); err != nil {
+	jobID := transfers.NewJobID("zip-")
+	ctx, cancel := context.WithCancel(a.ctx)
+	a.trackTransfer(jobID, cancel)
+	defer func() {
+		a.untrackTransfer(jobID)
+		cancel()
+	}()
+	name := filepath.Base(dest)
+	err = transfers.ZipFiles(ctx, a.client, files, out, jobID, a.emit)
+	if cerr := out.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		_ = os.Remove(dest)
+		a.emit("download:progress", transfers.Progress{JobID: jobID, FileName: name, Status: "error", Error: err.Error()})
 		return "", err
 	}
+	a.emit("download:progress", transfers.Progress{JobID: jobID, FileName: name, Loaded: 1, Total: 1, Percent: 100, Status: "done"})
 	return dest, nil
 }
 

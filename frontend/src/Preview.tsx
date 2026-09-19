@@ -5,7 +5,6 @@ interface PreviewProps {
   file: FileItem;
   url: string;
   loading: boolean;
-  error: string | null;
   position: string | null;
   hasPrev: boolean;
   hasNext: boolean;
@@ -26,7 +25,7 @@ function Icon({ d }: { d: string }) {
   );
 }
 
-export function Preview({ file, url, loading, error, position, hasPrev, hasNext, onClose, onPrev, onNext, onDownload }: PreviewProps) {
+export function Preview({ file, url, loading, position, hasPrev, hasNext, onClose, onPrev, onNext, onDownload }: PreviewProps) {
   const isVideo = isVideoFile(file);
   const isImage = !isVideo && isImageFile(file);
   const isAudio = !isVideo && !isImage && isAudioFile(file);
@@ -122,7 +121,7 @@ export function Preview({ file, url, loading, error, position, hasPrev, hasNext,
     setDragging(false);
   }
 
-  const shownError = error || mediaError;
+  const shownError = mediaError;
 
   return (
     <div

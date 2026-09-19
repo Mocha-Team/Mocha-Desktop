@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,6 +116,8 @@ func (c *Client) req(method, p string, query map[string]string, body any) (*http
 	return c.reqCtx(context.Background(), method, p, query, body)
 }
 
+const maxRateLimitRetries = 3
+
 func (c *Client) reqCtx(ctx context.Context, method, p string, query map[string]string, body any) (*http.Response, error) {
 	if c.BaseURL == "" {
 		return nil, fmt.Errorf("server URL not configured")
@@ -131,34 +134,73 @@ func (c *Client) reqCtx(ctx context.Context, method, p string, query map[string]
 		q.Set(k, v)
 	}
 	u.RawQuery = q.Encode()
-	var r io.Reader
+	var raw []byte
 	if body != nil {
-		raw, err := json.Marshal(body)
+		raw, err = json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
-		r = bytes.NewReader(raw)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, method, u.String(), r)
-	if err != nil {
-		return nil, err
+	backoff := 500 * time.Millisecond
+	for attempt := 0; ; attempt++ {
+		var r io.Reader
+		if raw != nil {
+			r = bytes.NewReader(raw)
+		}
+		httpReq, err := http.NewRequestWithContext(ctx, method, u.String(), r)
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+		httpReq.Header.Set("Accept", "application/json")
+		if raw != nil {
+			httpReq.Header.Set("Content-Type", "application/json")
+		}
+		resp, err := c.HTTP.Do(httpReq)
+		if err != nil {
+			return nil, err
+		}
+		if resp.StatusCode == http.StatusTooManyRequests && attempt < maxRateLimitRetries {
+			wait := retryAfter(resp.Header.Get("Retry-After"), backoff)
+			_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 2048))
+			resp.Body.Close()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(wait):
+			}
+			if backoff < 8*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			defer resp.Body.Close()
+			raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+			msg := parseError(raw, resp.Header.Get("Content-Type"))
+			return nil, fmt.Errorf("%s: %w", msg, &APIError{Status: resp.StatusCode})
+		}
+		return resp, nil
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
-	httpReq.Header.Set("Accept", "application/json")
-	if body != nil {
-		httpReq.Header.Set("Content-Type", "application/json")
+}
+
+func retryAfter(header string, fallback time.Duration) time.Duration {
+	header = strings.TrimSpace(header)
+	var d time.Duration
+	if secs, err := strconv.Atoi(header); err == nil {
+		d = time.Duration(secs) * time.Second
+	} else if t, err := http.ParseTime(header); err == nil {
+		d = time.Until(t)
+	} else {
+		return fallback
 	}
-	resp, err := c.HTTP.Do(httpReq)
-	if err != nil {
-		return nil, err
+	if d <= 0 {
+		return fallback
 	}
-	if resp.StatusCode >= 400 {
-		defer resp.Body.Close()
-		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		msg := parseError(raw, resp.Header.Get("Content-Type"))
-		return nil, fmt.Errorf("%s: %w", msg, &APIError{Status: resp.StatusCode})
+	if d > 30*time.Second {
+		return 30 * time.Second
 	}
-	return resp, nil
+	return d
 }
 
 func decode(resp *http.Response, out any) error {
@@ -333,23 +375,6 @@ func (c *Client) DeleteTrash(id string, all bool) error {
 	}
 	resp.Body.Close()
 	return nil
-}
-
-func (c *Client) BulkDownloadStream(fileIDs, folderPaths []string, w io.Writer) error {
-	body := map[string]any{"mode": "zip"}
-	if fileIDs != nil {
-		body["fileIds"] = fileIDs
-	}
-	if folderPaths != nil {
-		body["folderPaths"] = folderPaths
-	}
-	resp, err := c.req(http.MethodPost, "/files/bulk-download", nil, body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	_, err = io.Copy(w, resp.Body)
-	return err
 }
 
 type ArchiveEntry struct {
